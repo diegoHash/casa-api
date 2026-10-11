@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { BackendMailService } from '../common/services/backend-mail.service';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { CommunityContextGuard } from './community-context.guard';
@@ -9,6 +10,7 @@ import { RootBootstrapService } from './root-bootstrap.service';
 import { ScopesGuard } from './scopes.guard';
 import { TokenService } from './token.service';
 import { EmailService } from './email.service';
+import { EmailDomainService } from './email-domain.service';
 
 @Module({
   controllers: [AuthController],
@@ -22,6 +24,8 @@ import { EmailService } from './email.service';
     CommunityContextGuard,
     ScopesGuard,
     EmailService,
+    EmailDomainService,
+    BackendMailService,
   ],
   exports: [
     JwtAuthGuard,
@@ -30,6 +34,7 @@ import { EmailService } from './email.service';
     ScopesGuard,
     PasswordService,
     TokenService,
+    BackendMailService,
   ],
 })
 export class AuthModule {}

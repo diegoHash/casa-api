@@ -23,10 +23,15 @@ import {
   ListExpenseConceptsQueryDto,
   ListVendorsQueryDto,
   CreateOwnerPaymentDto,
+  CreatePaymentApplicationDto,
   CreatePeriodExpenseDto,
+  CreateVendorPayableDto,
+  CreatePayableReminderDto,
+  PayVendorPayableDto,
   PrepareChargeNoticeDto,
   UpdateExpenseCategoryDto,
   UpdateExpenseConceptDto,
+  UpdateVendorPayableDto,
 } from './dto/billing.dto';
 
 @Controller('billing')
@@ -40,6 +45,12 @@ export class BillingController {
     return this.billing.snapshot(auth.communityId as string);
   }
 
+  @Get('properties/:propertyId/payment-balance')
+  @RequireScopes('billing.read')
+  ownerPaymentBalance(@CurrentAuth() auth: AuthPrincipal, @Param('propertyId') propertyId: string) {
+    return this.billing.ownerPaymentBalance(auth.communityId as string, propertyId);
+  }
+
   @Get('exchange-rate/official')
   @RequireScopes('billing.read')
   officialExchangeRate() {
@@ -47,12 +58,38 @@ export class BillingController {
   }
 
   @Post('owner-payments')
-  @RequireScopes('billing.write', 'accounting.post')
+  @RequireScopes('billing.write')
   createOwnerPayment(
     @CurrentAuth() auth: AuthPrincipal,
     @Body() input: CreateOwnerPaymentDto,
   ) {
     return this.billing.createOwnerPayment(
+      auth.communityId as string,
+      auth.userId,
+      input,
+    );
+  }
+
+  @Post('owner-payments/:paymentId/reconcile')
+  @RequireScopes('billing.payments.reconcile')
+  reconcileOwnerPayment(
+    @CurrentAuth() auth: AuthPrincipal,
+    @Param('paymentId') paymentId: string,
+  ) {
+    return this.billing.reconcileOwnerPayment(
+      auth.communityId as string,
+      auth,
+      paymentId,
+    );
+  }
+
+  @Post('payment-applications')
+  @RequireScopes('billing.payments.apply')
+  createPaymentApplication(
+    @CurrentAuth() auth: AuthPrincipal,
+    @Body() input: CreatePaymentApplicationDto,
+  ) {
+    return this.billing.createPaymentApplication(
       auth.communityId as string,
       auth.userId,
       input,
@@ -107,8 +144,57 @@ export class BillingController {
 
   @Post('vendors')
   @RequireScopes('billing.write')
-  createVendor(@CurrentAuth() auth: AuthPrincipal, @Body() input: CreateVendorDto) {
-    return this.billing.createVendor(auth.communityId as string, auth.userId, input);
+  createVendor(
+    @CurrentAuth() auth: AuthPrincipal,
+    @Body() input: CreateVendorDto,
+  ) {
+    return this.billing.createVendor(
+      auth.communityId as string,
+      auth.userId,
+      input,
+    );
+  }
+
+  @Get('payables')
+  @RequireScopes('billing.read')
+  listPayables(@CurrentAuth() auth: AuthPrincipal) {
+    return this.billing.listPayables(auth.communityId as string);
+  }
+
+  @Post('payables')
+  @RequireScopes('billing.write')
+  createPayable(@CurrentAuth() auth: AuthPrincipal, @Body() input: CreateVendorPayableDto) {
+    return this.billing.createPayable(auth.communityId as string, auth.userId, input);
+  }
+
+  @Patch('payables/:payableId')
+  @RequireScopes('billing.write')
+  updatePayable(@CurrentAuth() auth: AuthPrincipal, @Param('payableId') payableId: string, @Body() input: UpdateVendorPayableDto) {
+    return this.billing.updatePayable(auth.communityId as string, auth.userId, payableId, input);
+  }
+
+  @Post('payables/:payableId/pay')
+  @RequireScopes('billing.write')
+  payPayable(@CurrentAuth() auth: AuthPrincipal, @Param('payableId') payableId: string, @Body() input: PayVendorPayableDto) {
+    return this.billing.payPayable(auth.communityId as string, auth.userId, payableId, input);
+  }
+
+  @Get('payables/:payableId/reminders')
+  @RequireScopes('billing.read')
+  listPayableReminders(@CurrentAuth() auth: AuthPrincipal, @Param('payableId') payableId: string) {
+    return this.billing.listPayableReminders(auth.communityId as string, payableId);
+  }
+
+  @Post('payables/:payableId/reminders')
+  @RequireScopes('billing.write')
+  createPayableReminder(@CurrentAuth() auth: AuthPrincipal, @Param('payableId') payableId: string, @Body() input: CreatePayableReminderDto) {
+    return this.billing.createPayableReminder(auth.communityId as string, auth.userId, payableId, input);
+  }
+
+  @Post('payable-reminders/:reminderId/cancel')
+  @RequireScopes('billing.write')
+  cancelPayableReminder(@CurrentAuth() auth: AuthPrincipal, @Param('reminderId') reminderId: string) {
+    return this.billing.cancelPayableReminder(auth.communityId as string, auth.userId, reminderId);
   }
 
   @Post('categories/:categoryId/concepts')
@@ -191,6 +277,19 @@ export class BillingController {
     @Param('noticeId') noticeId: string,
   ) {
     return this.billing.issueChargeNotice(
+      auth.communityId as string,
+      auth.userId,
+      noticeId,
+    );
+  }
+
+  @Post('charge-notices/:noticeId/void')
+  @RequireScopes('billing.write')
+  voidChargeNotice(
+    @CurrentAuth() auth: AuthPrincipal,
+    @Param('noticeId') noticeId: string,
+  ) {
+    return this.billing.voidChargeNotice(
       auth.communityId as string,
       auth.userId,
       noticeId,

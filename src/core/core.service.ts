@@ -28,6 +28,8 @@ import {
   UpdateCommunityDto,
   UpdateConcessionDto,
   UpdatePropertyCapacityDto,
+  UpdatePropertyDto,
+  TransferOwnershipDto,
 } from './dto/core.dto';
 
 function normalizePersonName(value: string) {
@@ -41,55 +43,55 @@ export class CoreService {
   async ownerServiceDirectory(communityId: string) {
     const [ownerships, staff] = await Promise.all([
       this.prisma.ownership.findMany({
-      where: {
-        communityId,
-        status: LifecycleStatus.ACTIVE,
-        OR: [{ endsOn: null }, { endsOn: { gte: new Date() } }],
-        property: { status: RecordStatus.ACTIVE },
-      },
-      orderBy: [
-        { property: { location: { code: 'asc' } } },
-        { property: { code: 'asc' } },
-        { person: { lastName: 'asc' } },
-      ],
-      select: {
-        person: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            documentType: true,
-            documentNumber: true,
-            phone: true,
-            email: true,
-            contacts: {
-              where: { communityId },
-              orderBy: { createdAt: 'asc' },
-              select: {
-                id: true,
-                type: true,
-                label: true,
-                value: true,
+        where: {
+          communityId,
+          status: LifecycleStatus.ACTIVE,
+          OR: [{ endsOn: null }, { endsOn: { gte: new Date() } }],
+          property: { status: RecordStatus.ACTIVE },
+        },
+        orderBy: [
+          { property: { location: { code: 'asc' } } },
+          { property: { code: 'asc' } },
+          { person: { lastName: 'asc' } },
+        ],
+        select: {
+          person: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              documentType: true,
+              documentNumber: true,
+              phone: true,
+              email: true,
+              contacts: {
+                where: { communityId },
+                orderBy: { createdAt: 'asc' },
+                select: {
+                  id: true,
+                  type: true,
+                  label: true,
+                  value: true,
+                },
+              },
+            },
+          },
+          property: {
+            select: {
+              id: true,
+              code: true,
+              kind: true,
+              location: {
+                select: {
+                  id: true,
+                  code: true,
+                  name: true,
+                  kind: true,
+                },
               },
             },
           },
         },
-        property: {
-          select: {
-            id: true,
-            code: true,
-            kind: true,
-            location: {
-              select: {
-                id: true,
-                code: true,
-                name: true,
-                kind: true,
-              },
-            },
-          },
-        },
-      },
       }),
       this.prisma.employment.findMany({
         where: {
@@ -119,7 +121,8 @@ export class CoreService {
       owners: ownerships.map(({ person, property }) => ({
         person,
         property,
-        sector: property.location?.name ?? property.location?.code ?? 'Sin sector',
+        sector:
+          property.location?.name ?? property.location?.code ?? 'Sin sector',
       })),
       staff,
     };
@@ -138,6 +141,7 @@ export class CoreService {
           },
         },
         people: {
+          where: { status: RecordStatus.ACTIVE },
           orderBy: [{ person: { lastName: 'asc' } }],
           include: {
             person: {
@@ -281,6 +285,23 @@ export class CoreService {
         },
       });
       if (existing) {
+        if (existing.status === RecordStatus.INACTIVE) {
+          const reactivated = await transaction.communityPerson.update({
+            where: { id: existing.id },
+            data: { status: RecordStatus.ACTIVE },
+          });
+          await this.audit(
+            transaction,
+            communityId,
+            actorUserId,
+            'PERSON_REACTIVATED',
+            'CommunityPerson',
+            existing.id,
+            'Persona reactivada en el directorio de la comunidad',
+            reactivated,
+          );
+          return { person, relation: reactivated };
+        }
         throw new ConflictException(
           'Esta persona ya pertenece al directorio de la comunidad.',
         );
@@ -445,6 +466,38 @@ export class CoreService {
     });
   }
 
+  async deactivatePerson(
+    communityId: string,
+    actorUserId: string,
+    personId: string,
+  ) {
+    return this.prisma.$transaction(async (transaction) => {
+      const relation = await transaction.communityPerson.findUnique({
+        where: { communityId_personId: { communityId, personId } },
+      });
+      if (!relation) {
+        throw new NotFoundException('La persona no pertenece a la comunidad seleccionada.');
+      }
+      if (relation.status === RecordStatus.INACTIVE) return relation;
+      const updated = await transaction.communityPerson.update({
+        where: { id: relation.id },
+        data: { status: RecordStatus.INACTIVE },
+      });
+      await this.audit(
+        transaction,
+        communityId,
+        actorUserId,
+        'PERSON_DEACTIVATED',
+        'CommunityPerson',
+        relation.id,
+        'Persona retirada del directorio de la comunidad',
+        relation,
+        updated,
+      );
+      return updated;
+    });
+  }
+
   async deletePersonContact(
     communityId: string,
     actorUserId: string,
@@ -543,6 +596,8 @@ export class CoreService {
               : new Prisma.Decimal(input.aliquot),
           maximumOccupancy: input.maximumOccupancy ?? null,
           braceletQuota: input.braceletQuota ?? 0,
+          parkingSpace: input.parkingSpace?.trim() || null,
+          parkingCapacity: input.parkingSpace ? input.parkingCapacity ?? null : null,
         },
       });
       if (input.aliquot !== undefined) {
@@ -570,6 +625,98 @@ export class CoreService {
         property,
       );
       return property;
+    });
+  }
+
+  async updateProperty(
+    communityId: string,
+    actorUserId: string,
+    propertyId: string,
+    input: UpdatePropertyDto,
+  ) {
+    return this.prisma.$transaction(async (transaction) => {
+      const property = await this.requireProperty(
+        transaction,
+        communityId,
+        propertyId,
+      );
+      const code = input.code?.trim().toUpperCase();
+      if (code && code !== property.code) {
+        const duplicate = await transaction.property.findUnique({
+          where: { communityId_code: { communityId, code } },
+          select: { id: true },
+        });
+        if (duplicate && duplicate.id !== property.id) {
+          throw new ConflictException(
+            'Ya existe un inmueble con este código en la comunidad.',
+          );
+        }
+      }
+      if (input.locationId) {
+        await this.requireLocation(transaction, communityId, input.locationId);
+      }
+      const parkingSpace = input.parkingSpace === undefined
+        ? property.parkingSpace
+        : input.parkingSpace.trim() || null;
+      const updated = await transaction.property.update({
+        where: { id: property.id },
+        data: {
+          kind: input.kind,
+          code,
+          locationId: input.locationId === undefined ? undefined : input.locationId || null,
+          maximumOccupancy: input.maximumOccupancy,
+          braceletQuota: input.braceletQuota,
+          parkingSpace,
+          parkingCapacity: parkingSpace
+            ? input.parkingCapacity === undefined
+              ? property.parkingCapacity
+              : input.parkingCapacity
+            : null,
+        },
+      });
+      await this.audit(
+        transaction,
+        communityId,
+        actorUserId,
+        'PROPERTY_UPDATED',
+        'Property',
+        property.id,
+        `Inmueble ${property.code} actualizado`,
+        property,
+        updated,
+      );
+      return updated;
+    });
+  }
+
+  async deactivateProperty(
+    communityId: string,
+    actorUserId: string,
+    propertyId: string,
+  ) {
+    return this.prisma.$transaction(async (transaction) => {
+      const property = await this.requireProperty(
+        transaction,
+        communityId,
+        propertyId,
+      );
+      if (property.status === RecordStatus.INACTIVE) return property;
+      const updated = await transaction.property.update({
+        where: { id: property.id },
+        data: { status: RecordStatus.INACTIVE },
+      });
+      await this.audit(
+        transaction,
+        communityId,
+        actorUserId,
+        'PROPERTY_DEACTIVATED',
+        'Property',
+        property.id,
+        `Inmueble ${property.code} desactivado`,
+        property,
+        updated,
+      );
+      return updated;
     });
   }
 
@@ -975,6 +1122,110 @@ export class CoreService {
     );
   }
 
+  transferOwnership(
+    communityId: string,
+    actorUserId: string,
+    ownershipId: string,
+    input: TransferOwnershipDto,
+  ) {
+    return this.prisma.$transaction(
+      async (transaction) => {
+        const current = await transaction.ownership.findFirst({
+          where: {
+            id: ownershipId,
+            communityId,
+            status: LifecycleStatus.ACTIVE,
+          },
+          include: { property: true, person: true },
+        });
+        if (!current) {
+          throw new NotFoundException(
+            'La titularidad vigente no existe en esta comunidad.',
+          );
+        }
+        await this.requireCommunityPerson(
+          transaction,
+          communityId,
+          input.personId,
+        );
+        if (current.personId === input.personId) {
+          throw new ConflictException(
+            'La persona seleccionada ya es titular de este inmueble.',
+          );
+        }
+
+        const transferDate = new Date(input.transferDate);
+        if (transferDate < current.startsOn) {
+          throw new ConflictException(
+            'La fecha de transferencia no puede ser anterior al inicio de la titularidad actual.',
+          );
+        }
+        const active = await transaction.ownership.findMany({
+          where: {
+            communityId,
+            propertyId: current.propertyId,
+            status: LifecycleStatus.ACTIVE,
+            id: { not: ownershipId },
+          },
+          select: { personId: true, ownershipPercentage: true },
+        });
+        if (active.some((item) => item.personId === input.personId)) {
+          throw new ConflictException(
+            'La persona seleccionada ya figura como propietaria vigente del inmueble.',
+          );
+        }
+        const assigned = active.reduce(
+          (total, item) => total + item.ownershipPercentage.toNumber(),
+          0,
+        );
+        if (assigned + current.ownershipPercentage.toNumber() > 100.00005) {
+          throw new ConflictException(
+            'La transferencia excede el 100% de participación del inmueble.',
+          );
+        }
+
+        const updatedSource = await transaction.ownership.update({
+          where: { id: ownershipId },
+          data: {
+            status: LifecycleStatus.ENDED,
+            endsOn: transferDate,
+            endReason: input.reason.trim(),
+          },
+        });
+        const newOwnership = await transaction.ownership.create({
+          data: {
+            communityId,
+            propertyId: current.propertyId,
+            personId: input.personId,
+            ownershipPercentage: current.ownershipPercentage,
+            startsOn: transferDate,
+          },
+          include: { property: true, person: true },
+        });
+        await this.audit(
+          transaction,
+          communityId,
+          actorUserId,
+          'OWNERSHIP_TRANSFERRED',
+          'Ownership',
+          newOwnership.id,
+          `Titularidad de ${current.property.code} transferida dentro de la comunidad`,
+          { sourceOwnershipId: current.id, ownerId: current.personId },
+          {
+            sourceOwnershipId: current.id,
+            newOwnershipId: newOwnership.id,
+            ownerId: newOwnership.personId,
+            propertyId: newOwnership.propertyId,
+            ownershipPercentage: newOwnership.ownershipPercentage,
+            transferDate,
+          },
+        );
+        return { previous: updatedSource, ownership: newOwnership };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+  }
+
   createEmployment(
     communityId: string,
     actorUserId: string,
@@ -1337,9 +1588,7 @@ export class CoreService {
         transaction,
         communityId,
         actorUserId,
-        wasAlreadyEnded
-          ? 'EMPLOYMENT_ACCESS_RECONCILED'
-          : 'EMPLOYMENT_ENDED',
+        wasAlreadyEnded ? 'EMPLOYMENT_ACCESS_RECONCILED' : 'EMPLOYMENT_ENDED',
         'Employment',
         employment.id,
         accessSuspended

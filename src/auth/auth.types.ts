@@ -24,6 +24,7 @@ export interface AuthPrincipal {
   communityRole?: string;
   scopes: string[];
   workspaces: string[];
+  communityName?: string;
 }
 
 export interface RequestMetadata {

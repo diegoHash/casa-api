@@ -31,6 +31,8 @@ import {
   UpdateCommunityDto,
   UpdateConcessionDto,
   UpdatePropertyCapacityDto,
+  UpdatePropertyDto,
+  TransferOwnershipDto,
 } from './dto/core.dto';
 
 @Controller('core')
@@ -87,6 +89,19 @@ export class CoreController {
       auth.userId,
       id,
       input,
+    );
+  }
+
+  @Delete('people/:id')
+  @RequireScopes('core.people.write')
+  deactivatePerson(
+    @CurrentAuth() auth: AuthPrincipal,
+    @Param('id') personId: string,
+  ) {
+    return this.core.deactivatePerson(
+      this.communityId(auth),
+      auth.userId,
+      personId,
     );
   }
 
@@ -153,6 +168,34 @@ export class CoreController {
     );
   }
 
+  @Patch('properties/:id')
+  @RequireScopes('core.properties.write')
+  updateProperty(
+    @CurrentAuth() auth: AuthPrincipal,
+    @Param('id') propertyId: string,
+    @Body() input: UpdatePropertyDto,
+  ) {
+    return this.core.updateProperty(
+      this.communityId(auth),
+      auth.userId,
+      propertyId,
+      input,
+    );
+  }
+
+  @Delete('properties/:id')
+  @RequireScopes('core.properties.write')
+  deactivateProperty(
+    @CurrentAuth() auth: AuthPrincipal,
+    @Param('id') propertyId: string,
+  ) {
+    return this.core.deactivateProperty(
+      this.communityId(auth),
+      auth.userId,
+      propertyId,
+    );
+  }
+
   @Post('board-administration/setup')
   @RequireScopes(
     'core.people.write',
@@ -207,6 +250,21 @@ export class CoreController {
     @Body() input: EndRelationshipDto,
   ) {
     return this.core.endOwnership(
+      this.communityId(auth),
+      auth.userId,
+      id,
+      input,
+    );
+  }
+
+  @Post('ownerships/:id/transfer')
+  @RequireScopes('core.properties.write')
+  transferOwnership(
+    @CurrentAuth() auth: AuthPrincipal,
+    @Param('id') id: string,
+    @Body() input: TransferOwnershipDto,
+  ) {
+    return this.core.transferOwnership(
       this.communityId(auth),
       auth.userId,
       id,

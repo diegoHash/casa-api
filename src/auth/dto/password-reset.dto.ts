@@ -13,6 +13,10 @@ export class RequestPasswordResetDto {
   @IsEmail()
   @MaxLength(190)
   email!: string;
+
+  @IsString()
+  @IsOptional()
+  type?: string;
 }
 
 export class ResetPasswordDto {

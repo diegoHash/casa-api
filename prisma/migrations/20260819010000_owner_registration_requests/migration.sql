@@ -1,0 +1,22 @@
+CREATE TABLE `OwnerRegistrationRequest` (
+    `id` VARCHAR(191) NOT NULL,
+    `communityId` VARCHAR(191) NOT NULL,
+    `folioNumber` VARCHAR(32) NOT NULL,
+    `docType` VARCHAR(10) NOT NULL,
+    `docNumber` VARCHAR(30) NOT NULL,
+    `fullName` VARCHAR(120) NOT NULL,
+    `propertyCode` VARCHAR(50) NOT NULL,
+    `email` VARCHAR(120) NOT NULL,
+    `phone` VARCHAR(30) NULL,
+    `status` VARCHAR(16) NOT NULL DEFAULT 'PENDING',
+    `personId` VARCHAR(191) NULL,
+    `rejectionReason` VARCHAR(500) NULL,
+    `approvedAt` DATETIME(3) NULL,
+    `rejectedAt` DATETIME(3) NULL,
+    `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updatedAt` DATETIME(3) NOT NULL,
+    UNIQUE INDEX `OwnerRegistrationRequest_folioNumber_key`(`folioNumber`),
+    INDEX `OwnerRegistrationRequest_communityId_status_createdAt_idx`(`communityId`, `status`, `createdAt`),
+    PRIMARY KEY (`id`),
+    CONSTRAINT `OwnerRegistrationRequest_communityId_fkey` FOREIGN KEY (`communityId`) REFERENCES `Community`(`id`) ON DELETE CASCADE ON UPDATE CASCADE
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;

@@ -1,4 +1,14 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { CurrentAuth } from '../auth/auth.decorators';
 import { AuthPrincipal } from '../auth/auth.types';
 import { CommunityContextGuard } from '../auth/community-context.guard';
@@ -25,8 +35,14 @@ export class AccountingController {
     return this.accounting.snapshot(auth.communityId as string);
   }
 
+  @Get('receivables')
+  @RequireScopes('accounting.read')
+  receivables(@CurrentAuth() auth: AuthPrincipal) {
+    return this.accounting.receivables(auth.communityId as string);
+  }
+
   @Post('accounts')
-  @RequireScopes('accounting.write')
+  @RequireScopes('accounting.accounts_manage')
   createAccount(
     @CurrentAuth() auth: AuthPrincipal,
     @Body() input: CreateLedgerAccountDto,
@@ -39,7 +55,7 @@ export class AccountingController {
   }
 
   @Patch('accounts/:id')
-  @RequireScopes('accounting.write')
+  @RequireScopes('accounting.accounts_manage')
   updateAccount(
     @CurrentAuth() auth: AuthPrincipal,
     @Param('id') id: string,
@@ -53,8 +69,21 @@ export class AccountingController {
     );
   }
 
+  @Delete('accounts/:id')
+  @RequireScopes('accounting.accounts_manage')
+  deleteAccount(
+    @CurrentAuth() auth: AuthPrincipal,
+    @Param('id') id: string,
+  ) {
+    return this.accounting.deleteAccount(
+      auth.communityId as string,
+      auth.userId,
+      id,
+    );
+  }
+
   @Post('periods')
-  @RequireScopes('accounting.write')
+  @RequireScopes('accounting.close_period')
   createPeriod(
     @CurrentAuth() auth: AuthPrincipal,
     @Body() input: CreateAccountingPeriodDto,
@@ -67,7 +96,7 @@ export class AccountingController {
   }
 
   @Post('entries')
-  @RequireScopes('accounting.write')
+  @RequireScopes('accounting.journal_post')
   createEntry(
     @CurrentAuth() auth: AuthPrincipal,
     @Body() input: CreateJournalEntryDto,
@@ -80,7 +109,7 @@ export class AccountingController {
   }
 
   @Post('entries/:entryId/post')
-  @RequireScopes('accounting.post')
+  @RequireScopes('accounting.journal_post')
   postEntry(
     @CurrentAuth() auth: AuthPrincipal,
     @Param('entryId') entryId: string,
@@ -93,7 +122,7 @@ export class AccountingController {
   }
 
   @Post('entries/:entryId/reverse')
-  @RequireScopes('accounting.post')
+  @RequireScopes('accounting.journal_post')
   reverseEntry(
     @CurrentAuth() auth: AuthPrincipal,
     @Param('entryId') entryId: string,
@@ -108,7 +137,7 @@ export class AccountingController {
   }
 
   @Post('periods/:periodId/close')
-  @RequireScopes('accounting.post')
+  @RequireScopes('accounting.close_period')
   closePeriod(
     @CurrentAuth() auth: AuthPrincipal,
     @Param('periodId') periodId: string,
@@ -116,6 +145,56 @@ export class AccountingController {
     return this.accounting.closePeriod(
       auth.communityId as string,
       auth.userId,
+      periodId,
+    );
+  }
+
+  @Get('ledger/:accountId')
+  @RequireScopes('accounting.journal_read')
+  getAccountLedger(
+    @CurrentAuth() auth: AuthPrincipal,
+    @Param('accountId') accountId: string,
+    @Query('periodId') periodId?: string,
+  ) {
+    return this.accounting.getAccountLedger(
+      auth.communityId as string,
+      accountId,
+      periodId,
+    );
+  }
+
+  @Get('reports/trial-balance')
+  @RequireScopes('accounting.reports_view')
+  getTrialBalance(
+    @CurrentAuth() auth: AuthPrincipal,
+    @Query('periodId') periodId?: string,
+  ) {
+    return this.accounting.getTrialBalance(
+      auth.communityId as string,
+      periodId,
+    );
+  }
+
+  @Get('reports/income-statement')
+  @RequireScopes('accounting.reports_view')
+  getIncomeStatement(
+    @CurrentAuth() auth: AuthPrincipal,
+    @Query('periodId') periodId?: string,
+  ) {
+    return this.accounting.getIncomeStatement(
+      auth.communityId as string,
+      periodId,
+    );
+  }
+
+  @Get('reports/balance-sheet')
+  @RequireScopes('accounting.reports_view')
+  getBalanceSheet(
+    @CurrentAuth() auth: AuthPrincipal,
+    @Query('periodId') periodId?: string,
+  ) {
+    return this.accounting.getBalanceSheet(
+      auth.communityId as string,
       periodId,
     );
   }

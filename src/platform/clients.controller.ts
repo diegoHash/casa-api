@@ -5,6 +5,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { PlatformRole } from '@prisma/client';
@@ -16,10 +17,14 @@ import { CreateClientDto } from './dto/create-client.dto';
 import { CreateCommunityAccessDto } from './dto/create-community-access.dto';
 import { UpdateCommunityAccessDto } from './dto/update-community-access.dto';
 import { UpdateCommunityWorkspacesDto } from './dto/update-community-workspaces.dto';
+import { RevokeCommunityAccessDto } from './dto/revoke-community-access.dto';
 import {
+  CreateLicensePaymentDto,
   ReconcileLicenseDto,
   RevokeLicenseDto,
   UpdateAutoRenewDto,
+  UpdateLicenseSettingsDto,
+  UpdateLicenseStatusDto,
   UpdateClientStandingDto,
 } from './dto/manage-client.dto';
 import { ClientsService } from './clients.service';
@@ -33,6 +38,14 @@ export class ClientsController {
   @Get()
   list() {
     return this.clientsService.list();
+  }
+
+  @Get('audit')
+  audit(
+    @Query('communityId') communityId?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.clientsService.listAudit(communityId, limit);
   }
 
   @Get(':id')
@@ -71,12 +84,7 @@ export class ClientsController {
     @Param('accessId') accessId: string,
     @Body() input: UpdateCommunityAccessDto,
   ) {
-    return this.clientsService.updateAccess(
-      auth,
-      id,
-      accessId,
-      input,
-    );
+    return this.clientsService.updateAccess(auth, id, accessId, input);
   }
 
   @Patch(':id/access-users/:accessId/workspaces')
@@ -92,6 +100,16 @@ export class ClientsController {
       accessId,
       input,
     );
+  }
+
+  @Post(':id/access-users/:accessId/revoke')
+  revokeAccess(
+    @CurrentAuth() auth: AuthPrincipal,
+    @Param('id') id: string,
+    @Param('accessId') accessId: string,
+    @Body() input: RevokeCommunityAccessDto,
+  ) {
+    return this.clientsService.revokeAccess(auth, id, accessId, input);
   }
 
   @Patch(':id/standing')
@@ -128,5 +146,32 @@ export class ClientsController {
     @Body() input: UpdateAutoRenewDto,
   ) {
     return this.clientsService.updateAutoRenew(auth.userId, id, input);
+  }
+
+  @Patch(':id/license/status')
+  updateLicenseStatus(
+    @CurrentAuth() auth: AuthPrincipal,
+    @Param('id') id: string,
+    @Body() input: UpdateLicenseStatusDto,
+  ) {
+    return this.clientsService.updateLicenseStatus(auth.userId, id, input);
+  }
+
+  @Patch(':id/license/settings')
+  updateLicenseSettings(
+    @CurrentAuth() auth: AuthPrincipal,
+    @Param('id') id: string,
+    @Body() input: UpdateLicenseSettingsDto,
+  ) {
+    return this.clientsService.updateLicenseSettings(auth.userId, id, input);
+  }
+
+  @Post(':id/license/payments')
+  createLicensePayment(
+    @CurrentAuth() auth: AuthPrincipal,
+    @Param('id') id: string,
+    @Body() input: CreateLicensePaymentDto,
+  ) {
+    return this.clientsService.createLicensePayment(auth.userId, id, input);
   }
 }

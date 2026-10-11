@@ -11,28 +11,37 @@
     "start:prod": "node dist/main.js",
     "lint": "eslint \"{src,test}/**/*.ts\"",
     "lint:fix": "eslint \"{src,test}/**/*.ts\" --fix",
-    "test": "vitest run",
+    "test": "vitest run --exclude test/integration/**",
     "test:watch": "vitest",
+    "test:db:up": "docker compose -f docker-compose.test.yml up -d --wait",
+    "test:db:down": "docker compose -f docker-compose.test.yml down -v",
+    "test:integration": "node scripts/run-integration-tests.cjs",
     "prisma:generate": "prisma generate",
     "prisma:validate": "prisma validate",
     "prisma:migrate:dev": "prisma migrate dev",
+    "prisma:migrate:deploy": "node scripts/migrate-production.cjs",
     "prisma:studio": "prisma studio"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1141.0",
+    "@aws-sdk/client-secrets-manager": "^3.1109.0",
     "@nestjs/common": "11.1.28",
     "@nestjs/config": "4.0.4",
     "@nestjs/core": "11.1.28",
-    "@nestjs/platform-express": "11.1.28",
+    "@nestjs/platform-express": "^11.2.6",
+    "@nestjs/schedule": "^12.0.2",
+    "@nestjs/throttler": "^6.7.1",
     "@prisma/client": "^6.19.3",
     "class-transformer": "0.5.1",
     "class-validator": "0.15.1",
     "csv-parse": "^7.0.1",
     "helmet": "8.3.0",
-    "joi": "18.2.3",
+    "joi": "^18.2.9",
     "mdb-reader": "^3.2.0",
-    "multer": "^2.0.2",
+    "multer": "^2.4.0",
     "reflect-metadata": "0.2.2",
-    "rxjs": "7.8.2"
+    "rxjs": "7.8.2",
+    "sharp": "^0.35.4"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
@@ -51,6 +60,9 @@
     "ts-node": "10.9.2",
     "typescript": "5.9.3",
     "typescript-eslint": "8.65.0",
-    "vitest": "4.1.10"
+    "vitest": "4.1.11"
+  },
+  "overrides": {
+    "deepmerge-ts": "^8.0.2"
   }
 }

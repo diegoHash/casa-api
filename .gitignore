@@ -2,6 +2,9 @@ node_modules/
 dist/
 coverage/
 .env
+.env.example
+.env.test
+.env.test.example
 .env.local
 *.log
 .idea/

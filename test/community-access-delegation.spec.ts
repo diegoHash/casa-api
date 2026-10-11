@@ -73,6 +73,26 @@ describe('delegación de accesos comunitarios', () => {
     expect(prisma.$transaction).toHaveBeenCalledOnce();
   });
 
+  it('permite al administrador integral delegar Control Principal aunque su asignación histórica sea parcial', async () => {
+    const prisma = { $transaction: vi.fn().mockResolvedValue({ ok: true }) };
+    const service = serviceWith(prisma);
+    const integralAdmin: AuthPrincipal = {
+      ...delegatedAdmin,
+      scopes: ['community.full_access'],
+      workspaces: ['ADMINISTRATION'],
+    };
+
+    await expect(
+      service.createAccessUserForCommunity(integralAdmin, 'community-a', {
+        personId: 'person-a',
+        roleCode: 'OS_CONTROL_PRINCIPAL',
+        scopes: ['owner_service.authorizations.access.validate'],
+        workspaceCodes: ['CONTROL_PRINCIPAL'],
+        temporaryPassword: 'Casa-Segura-2026',
+      }),
+    ).resolves.toEqual({ ok: true });
+  });
+
   it('permite a ROOT conceder acceso integral sin exigir scopes comunitarios en su token de plataforma', async () => {
     const prisma = { $transaction: vi.fn().mockResolvedValue({ ok: true }) };
     const service = serviceWith(prisma);
@@ -86,26 +106,21 @@ describe('delegación de accesos comunitarios', () => {
     };
 
     await expect(
-      service.updateAccessForCommunity(
-        root,
-        'community-a',
-        'access-a',
-        {
-          roleCode: 'ADMINISTRADOR_INTEGRAL',
-          scopes: ['community.full_access'],
-          workspaceCodes: [
-            'ADMINISTRATION',
-            'TREASURY',
-            'OWNER_SERVICE',
-            'PURCHASES',
-            'COLLECTIONS',
-            'CONTROL_PRINCIPAL',
-            'WRISTBANDS',
-            'BOARD',
-          ],
-          reason: 'Designación aprobada por CASA Control.',
-        },
-      ),
+      service.updateAccessForCommunity(root, 'community-a', 'access-a', {
+        roleCode: 'ADMINISTRADOR_INTEGRAL',
+        scopes: ['community.full_access'],
+        workspaceCodes: [
+          'ADMINISTRATION',
+          'TREASURY',
+          'OWNER_SERVICE',
+          'PURCHASES',
+          'COLLECTIONS',
+          'CONTROL_PRINCIPAL',
+          'WRISTBANDS',
+          'BOARD',
+        ],
+        reason: 'Designación aprobada por CASA Control.',
+      }),
     ).resolves.toEqual({ ok: true });
     expect(prisma.$transaction).toHaveBeenCalledOnce();
   });
@@ -139,6 +154,76 @@ describe('delegación de accesos comunitarios', () => {
     expect(findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'access-b', communityId: 'community-a' },
+      }),
+    );
+  });
+
+  it('revoca un acceso, termina sus espacios e invalida sus sesiones', async () => {
+    const access = {
+      id: 'access-a',
+      userId: 'worker-a',
+      communityId: 'community-a',
+      roleCode: 'OPERACIONES',
+      scopes: ['core.read'],
+      status: 'ACTIVE',
+      workspaces: [{ id: 'workspace-a', workspaceCode: 'ADMINISTRATION' }],
+      user: {
+        id: 'worker-a',
+        email: 'worker@comunidad.test',
+        platformRole: null,
+      },
+    };
+    const revoked = { ...access, status: 'REVOKED', endsOn: new Date() };
+    const transaction = {
+      communityAccess: {
+        findFirst: vi.fn().mockResolvedValue(access),
+        update: vi.fn().mockResolvedValue(revoked),
+      },
+      communityWorkspaceAssignment: {
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
+      appUser: { update: vi.fn().mockResolvedValue({}) },
+      authSession: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+      auditEvent: { create: vi.fn().mockResolvedValue({}) },
+    };
+    const prisma = {
+      $transaction: vi.fn(
+        (callback: (client: typeof transaction) => Promise<unknown>) =>
+          callback(transaction),
+      ),
+    };
+    const service = serviceWith(prisma);
+    const root: AuthPrincipal = {
+      userId: 'root',
+      email: 'root@somoscasa.site',
+      platformRole: PlatformRole.ROOT,
+      tokenVersion: 0,
+      scopes: [],
+      workspaces: [],
+    };
+
+    await expect(
+      service.revokeAccessForCommunity(root, 'community-a', 'access-a', {
+        reason: 'Terminación de funciones aprobada.',
+      }),
+    ).resolves.toEqual(revoked);
+    expect(
+      transaction.communityWorkspaceAssignment.updateMany,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { accessId: 'access-a', status: 'ACTIVE' },
+      }),
+    );
+    expect(transaction.communityAccess.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'access-a' },
+        data: { status: 'REVOKED', endsOn: expect.any(Date) },
+      }),
+    );
+    expect(transaction.authSession.updateMany).toHaveBeenCalledOnce();
+    expect(transaction.auditEvent.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ action: 'COMMUNITY_ACCESS_REVOKED' }),
       }),
     );
   });
@@ -239,8 +324,46 @@ describe('personal elegible para acceso', () => {
         employmentId: 'employment-new',
         personId: 'person-a',
         canCreateAccess: false,
-        access: expect.objectContaining({ id: 'access-a' }),
+        access: expect.objectContaining({ id: 'access-a' }) as unknown,
       }),
     );
+  });
+});
+
+describe('delegaci�n de permisos por espacio', () => {
+  it('no permite trasladar un permiso a otro espacio', () => {
+    const service = serviceWith({ $transaction: vi.fn() });
+    const auth = {
+      ...delegatedAdmin,
+      scopes: ['ADMINISTRATION:treasury.read'],
+      workspaces: ['ADMINISTRATION', 'ACCOUNTING'],
+    };
+    expect(() =>
+      service.createAccessUserForCommunity(auth, 'community-a', {
+        personId: 'person-a',
+        roleCode: 'LECTURA',
+        scopes: ['ACCOUNTING:treasury.read'],
+        workspaceCodes: ['ACCOUNTING'],
+        temporaryPassword: 'Casa-Segura-2026',
+      }),
+    ).toThrow(ForbiddenException);
+  });
+  it('acepta delegar el permiso exactamente en su espacio', async () => {
+    const service = serviceWith({
+      $transaction: vi.fn().mockResolvedValue({ ok: true }),
+    });
+    const auth = {
+      ...delegatedAdmin,
+      scopes: ['ADMINISTRATION:treasury.read'],
+    };
+    await expect(
+      service.createAccessUserForCommunity(auth, 'community-a', {
+        personId: 'person-a',
+        roleCode: 'LECTURA',
+        scopes: ['ADMINISTRATION:treasury.read'],
+        workspaceCodes: ['ADMINISTRATION'],
+        temporaryPassword: 'Casa-Segura-2026',
+      }),
+    ).resolves.toEqual({ ok: true });
   });
 });
