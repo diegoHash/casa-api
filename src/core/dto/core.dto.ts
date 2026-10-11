@@ -209,7 +209,7 @@ export class CreatePropertyDto {
   @Min(1)
   @Max(10000)
   @IsOptional()
-  maximumOccupancy?: number;
+  maximumOccupancy?: number | null;
 
   @Type(() => Number)
   @IsInt()
@@ -217,6 +217,61 @@ export class CreatePropertyDto {
   @Max(10000)
   @IsOptional()
   braceletQuota?: number;
+
+  @IsString()
+  @MaxLength(120)
+  @IsOptional()
+  parkingSpace?: string;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  @IsOptional()
+  parkingCapacity?: number | null;
+}
+
+export class UpdatePropertyDto {
+  @IsEnum(PropertyKind)
+  @IsOptional()
+  kind?: PropertyKind;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(60)
+  @IsOptional()
+  code?: string;
+
+  @IsString()
+  @MaxLength(40)
+  @IsOptional()
+  locationId?: string;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(10000)
+  @IsOptional()
+  maximumOccupancy?: number | null;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(10000)
+  @IsOptional()
+  braceletQuota?: number;
+
+  @IsString()
+  @MaxLength(120)
+  @IsOptional()
+  parkingSpace?: string;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  @IsOptional()
+  parkingCapacity?: number | null;
 }
 
 export class UpdatePropertyCapacityDto {
@@ -270,6 +325,21 @@ export class CreateOwnershipDto {
 
   @IsDateString()
   startsOn!: string;
+}
+
+export class TransferOwnershipDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(40)
+  personId!: string;
+
+  @IsDateString()
+  transferDate!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(500)
+  reason!: string;
 }
 
 export class CreateEmploymentDto {

@@ -1,0 +1,75 @@
+name: Deploy CASA API to EC2
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: casa-api-production
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out release
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install, validate, and build
+        env:
+          DATABASE_URL: mysql://casa:build-only@127.0.0.1:3306/casa
+          SHADOW_DATABASE_URL: mysql://casa:build-only@127.0.0.1:3306/casa_shadow
+        run: |
+          npm ci
+          npm run prisma:generate
+          npm run prisma:validate
+          npm run build
+
+      - name: Package tracked source
+        env:
+          RELEASE_ID: ${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+        run: git archive --format=tar.gz --output="$RUNNER_TEMP/casa-api-$RELEASE_ID.tar.gz" "$GITHUB_SHA"
+
+      - name: Configure SSH
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_KEY: ${{ secrets.EC2_KEY }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_KNOWN_HOSTS: ${{ vars.EC2_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          [[ "$EC2_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$EC2_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]]
+          [[ -n "$EC2_KNOWN_HOSTS" ]]
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$EC2_KEY" | tr -d '\r' > "$HOME/.ssh/casa-ec2"
+          chmod 600 "$HOME/.ssh/casa-ec2"
+          ssh-keygen -y -P '' -f "$HOME/.ssh/casa-ec2" >/dev/null
+          printf '%s\n' "$EC2_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          ssh-keygen -F "$EC2_HOST" -f "$HOME/.ssh/known_hosts" >/dev/null
+
+      - name: Upload and deploy release
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          RELEASE_ID: ${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          SSH=(ssh -i "$HOME/.ssh/casa-ec2" -o BatchMode=yes -o StrictHostKeyChecking=yes)
+          SCP=(scp -i "$HOME/.ssh/casa-ec2" -o BatchMode=yes -o StrictHostKeyChecking=yes)
+          REMOTE_ARCHIVE="casa/casa-api/uploads/$RELEASE_ID.tar.gz"
+          "${SSH[@]}" "$EC2_USER@$EC2_HOST" "mkdir -p \"\$HOME/casa/casa-api/uploads\""
+          "${SCP[@]}" "$RUNNER_TEMP/casa-api-$RELEASE_ID.tar.gz" "$EC2_USER@$EC2_HOST:~/$REMOTE_ARCHIVE"
+          "${SCP[@]}" scripts/deploy-ec2.sh "$EC2_USER@$EC2_HOST:~/casa/casa-api/uploads/deploy-$RELEASE_ID.sh"
+          "${SSH[@]}" "$EC2_USER@$EC2_HOST" "bash \"\$HOME/casa/casa-api/uploads/deploy-$RELEASE_ID.sh\" '$RELEASE_ID' \"\$HOME/$REMOTE_ARCHIVE\""

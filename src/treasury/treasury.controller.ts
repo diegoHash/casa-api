@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { CurrentAuth } from '../auth/auth.decorators';
 import { AuthPrincipal } from '../auth/auth.types';
 import { CommunityContextGuard } from '../auth/community-context.guard';
@@ -52,6 +61,12 @@ export class TreasuryController {
     );
   }
 
+  @Delete('bank-accounts/:id')
+  @RequireScopes('treasury.banks.write')
+  deactivateBankAccount(@CurrentAuth() auth: AuthPrincipal, @Param('id') id: string) {
+    return this.treasury.deactivateBankAccount(auth.communityId as string, id, auth.userId);
+  }
+
   @Post('payment-methods')
   @RequireScopes('treasury.write')
   createPaymentMethod(
@@ -78,5 +93,11 @@ export class TreasuryController {
       auth.userId,
       input,
     );
+  }
+
+  @Delete('payment-methods/:id')
+  @RequireScopes('treasury.methods.write')
+  deactivatePaymentMethod(@CurrentAuth() auth: AuthPrincipal, @Param('id') id: string) {
+    return this.treasury.deactivatePaymentMethod(auth.communityId as string, id, auth.userId);
   }
 }

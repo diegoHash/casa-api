@@ -3,6 +3,8 @@ import {
   Currency,
   ExpenseAllocationMethod,
   ExpensePaymentSource,
+  PayableCategory,
+  PayableStatus,
   RecordStatus,
 } from '@prisma/client';
 import { Type } from 'class-transformer';
@@ -56,6 +58,10 @@ export class CreateExpenseConceptDto {
   @IsOptional()
   @MaxLength(500)
   description?: string;
+
+  @IsString()
+  @IsOptional()
+  defaultExpenseAccountId?: string;
 }
 
 export class CreateVendorDto {
@@ -120,6 +126,10 @@ export class UpdateExpenseConceptDto extends UpdateExpenseCategoryDto {
   @IsNotEmpty()
   @IsOptional()
   categoryId?: string;
+
+  @IsString()
+  @IsOptional()
+  defaultExpenseAccountId?: string;
 }
 
 export class ListExpenseConceptsQueryDto {
@@ -227,7 +237,7 @@ export class CreatePeriodExpenseDto {
   paidAt!: string;
 
   @IsString()
-  @IsNotEmpty()
+  @IsOptional()
   expenseAccountId!: string;
 
   @IsString()
@@ -256,6 +266,9 @@ export class ChargeNoticeComponentDto {
 }
 
 export class PrepareChargeNoticeDto {
+  @IsDateString()
+  dueDate!: string;
+
   @IsString()
   @IsNotEmpty()
   receivableAccountId!: string;
@@ -282,38 +295,28 @@ export class CreateOwnerPaymentDto {
 
   @IsString()
   @IsOptional()
-  chargeNoticeAllocationId?: string;
-
-  @IsString()
-  @IsOptional()
   paymentMethodId?: string;
 
   @IsString()
   @IsOptional()
   bankAccountId?: string;
 
-  @IsString()
-  @IsNotEmpty()
-  receiptAccountId!: string;
-
-  @IsString()
-  @IsNotEmpty()
-  receivableAccountId!: string;
-
-  @IsString()
-  @IsOptional()
-  advanceAccountId?: string;
-
   @IsNumber({ maxDecimalPlaces: 2 })
   @IsPositive()
   amount!: number;
 
-  @IsEnum(Currency)
-  currency!: Currency;
+  @IsString()
+  @Matches(/^[A-Z]{3}$/)
+  currency!: string;
 
-  @IsNumber({ maxDecimalPlaces: 6 })
+  @IsNumber({ maxDecimalPlaces: 2 })
   @IsPositive()
   exchangeRate!: number;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(40)
+  exchangeRateSource?: string;
 
   @IsString()
   @IsNotEmpty()
@@ -327,4 +330,167 @@ export class CreateOwnerPaymentDto {
   @IsOptional()
   @MaxLength(1000)
   notes?: string;
+}
+
+export class CreatePaymentApplicationDto {
+  @IsString()
+  @IsNotEmpty()
+  ownerPaymentId!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  chargeNoticeAllocationId!: string;
+
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @IsPositive()
+  functionalAmount!: number;
+}
+
+export class CreateVendorPayableDto {
+  @IsEnum(PayableCategory)
+  category!: PayableCategory;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(160)
+  categoryLabel?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(220)
+  supplierName!: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(40)
+  supplierDocument?: string;
+
+  @IsString()
+  @IsOptional()
+  vendorId?: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(500)
+  description!: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(100)
+  invoiceNumber?: string;
+
+  @IsDateString()
+  issueDate!: string;
+
+  @IsDateString()
+  dueDate!: string;
+
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @IsPositive()
+  amount!: number;
+
+  @IsEnum(Currency)
+  currency!: Currency;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(1000)
+  notes?: string;
+
+  @IsString()
+  @IsOptional()
+  expenseAccountId?: string;
+
+  @IsString()
+  @IsOptional()
+  liabilityAccountId?: string;
+}
+
+export class UpdateVendorPayableDto {
+  @IsEnum(PayableCategory)
+  @IsOptional()
+  category?: PayableCategory;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(160)
+  categoryLabel?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(220)
+  supplierName?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(40)
+  supplierDocument?: string;
+
+  @IsString()
+  @IsOptional()
+  vendorId?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(500)
+  description?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(100)
+  invoiceNumber?: string;
+
+  @IsDateString()
+  @IsOptional()
+  issueDate?: string;
+
+  @IsDateString()
+  @IsOptional()
+  dueDate?: string;
+
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @IsPositive()
+  @IsOptional()
+  amount?: number;
+
+  @IsEnum(Currency)
+  @IsOptional()
+  currency?: Currency;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(1000)
+  notes?: string;
+
+  @IsEnum(PayableStatus)
+  @IsOptional()
+  status?: PayableStatus;
+}
+
+export class PayVendorPayableDto {
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @IsPositive()
+  amount!: number;
+
+  @IsDateString()
+  paidAt!: string;
+
+  @IsString()
+  @IsOptional()
+  paymentAccountId?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(160)
+  paymentReference?: string;
+}
+
+export class CreatePayableReminderDto {
+  @IsDateString()
+  remindAt!: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(300)
+  message?: string;
 }

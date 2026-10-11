@@ -3,16 +3,17 @@ import {
   ForbiddenException,
   Injectable,
   UnauthorizedException,
-} from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { AccessStatus, PlatformRole, Prisma } from '@prisma/client';
-import { createHmac, randomBytes, randomInt, randomUUID } from 'node:crypto';
-import { PrismaService } from '../database/prisma.service';
-import { AuthPrincipal, RequestMetadata } from './auth.types';
-import { PasswordService } from './password.service';
-import { TokenService } from './token.service';
-import { EmailService } from './email.service';
-import { ResetPasswordDto } from './dto/password-reset.dto';
+} from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { AccessStatus, PlatformRole, Prisma } from "@prisma/client";
+import { createHmac, randomBytes, randomInt, randomUUID } from "node:crypto";
+import { PrismaService } from "../database/prisma.service";
+import { AuthPrincipal, RequestMetadata } from "./auth.types";
+import { PasswordService } from "./password.service";
+import { TokenService } from "./token.service";
+import { EmailService } from "./email.service";
+import { ResetPasswordDto } from "./dto/password-reset.dto";
+import { resolveCommunityWorkspaceCodes } from "./workspace-catalog";
 
 @Injectable()
 export class AuthService {
@@ -27,6 +28,7 @@ export class AuthService {
   async requestPasswordReset(
     emailInput: string,
     metadata: RequestMetadata,
+    type?: string,
   ) {
     const email = emailInput.trim().toLowerCase();
     const user = await this.prisma.appUser.findUnique({
@@ -37,8 +39,8 @@ export class AuthService {
       return { accepted: true };
     }
 
-    const token = randomBytes(32).toString('base64url');
-    const pin = String(randomInt(0, 1_000_000)).padStart(6, '0');
+    const token = randomBytes(32).toString("base64url");
+    const pin = String(randomInt(0, 1_000_000)).padStart(6, "0");
     const expiresInMinutes = 15;
     const expiresAt = new Date(Date.now() + expiresInMinutes * 60_000);
     const challengeId = randomUUID();
@@ -62,23 +64,24 @@ export class AuthService {
         data: {
           actorUserId: user.id,
           requestId: randomUUID(),
-          action: 'PASSWORD_RESET_REQUESTED',
-          entityType: 'AppUser',
+          action: "PASSWORD_RESET_REQUESTED",
+          entityType: "AppUser",
           entityId: user.id,
-          detail: 'Recuperación de contraseña solicitada',
+          detail: "Recuperación de contraseña solicitada",
           ...metadata,
         },
       }),
     ]);
 
     const webUrl = (
-      this.config.get<string>('PUBLIC_WEB_URL') ?? 'http://localhost:5173'
-    ).replace(/\/$/, '');
+      this.config.get<string>("PUBLIC_WEB_URL") ?? "http://localhost:5173"
+    ).replace(/\/$/, "");
+    const typeQuery = type ? `&type=${encodeURIComponent(type)}` : "";
     await this.email.sendPasswordReset({
       to: user.email,
-      displayName: user.person?.firstName ?? 'usuario CASA',
+      displayName: user.person?.firstName ?? "usuario CASA",
       pin,
-      resetUrl: `${webUrl}/restablecer-clave?token=${encodeURIComponent(token)}`,
+      resetUrl: `${webUrl}/restablecer-clave?token=${encodeURIComponent(token)}${typeQuery}`,
       expiresInMinutes,
     });
     return { accepted: true };
@@ -103,7 +106,7 @@ export class AuthService {
               usedAt: null,
               expiresAt: { gt: now },
             },
-            orderBy: { createdAt: 'desc' },
+            orderBy: { createdAt: "desc" },
             include: { user: true },
           })
         : null;
@@ -125,7 +128,7 @@ export class AuthService {
       challenge.attempts >= 5
     ) {
       throw new BadRequestException(
-        'El enlace o PIN no es válido, ya fue utilizado o está vencido.',
+        "El enlace o PIN no es válido, ya fue utilizado o está vencido.",
       );
     }
 
@@ -151,10 +154,10 @@ export class AuthService {
         data: {
           actorUserId: challenge.userId,
           requestId: randomUUID(),
-          action: 'PASSWORD_RESET_COMPLETED',
-          entityType: 'AppUser',
+          action: "PASSWORD_RESET_COMPLETED",
+          entityType: "AppUser",
           entityId: challenge.userId,
-          detail: 'Contraseña restablecida y sesiones anteriores revocadas',
+          detail: "Contraseña restablecida y sesiones anteriores revocadas",
           ...metadata,
         },
       }),
@@ -164,11 +167,11 @@ export class AuthService {
 
   private resetHash(value: string) {
     return createHmac(
-      'sha256',
-      this.config.getOrThrow<string>('JWT_ACCESS_SECRET'),
+      "sha256",
+      this.config.getOrThrow<string>("JWT_ACCESS_SECRET"),
     )
       .update(value)
-      .digest('hex');
+      .digest("hex");
   }
 
   async login(emailInput: string, password: string, metadata: RequestMetadata) {
@@ -182,36 +185,45 @@ export class AuthService {
       user.status !== AccessStatus.ACTIVE ||
       !(await this.passwords.verify(password, user.passwordHash))
     ) {
-      throw new UnauthorizedException('Correo o contraseña incorrectos.');
+      throw new UnauthorizedException("Correo o contraseña incorrectos.");
     }
 
     const refresh = this.tokens.issueRefreshToken();
     const loggedInAt = new Date();
-    await this.prisma.$transaction([
-      this.prisma.authSession.create({
-        data: {
-          userId: user.id,
-          tokenHash: refresh.tokenHash,
-          expiresAt: refresh.expiresAt,
-          ...metadata,
-        },
-      }),
-      this.prisma.appUser.update({
-        where: { id: user.id },
-        data: { lastAccessAt: loggedInAt },
-      }),
-      this.prisma.auditEvent.create({
-        data: {
-          actorUserId: user.id,
-          requestId: randomUUID(),
-          action: 'AUTH_LOGIN',
-          entityType: 'AppUser',
-          entityId: user.id,
-          detail: 'Inicio de sesión exitoso',
-          ...metadata,
-        },
-      }),
-    ]);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        await this.prisma.$transaction([
+          this.prisma.authSession.create({
+            data: {
+              userId: user.id,
+              tokenHash: refresh.tokenHash,
+              expiresAt: refresh.expiresAt,
+              ...metadata,
+            },
+          }),
+          this.prisma.appUser.update({
+            where: { id: user.id },
+            data: { lastAccessAt: loggedInAt },
+          }),
+          this.prisma.auditEvent.create({
+            data: {
+              actorUserId: user.id,
+              requestId: randomUUID(),
+              action: "AUTH_LOGIN",
+              entityType: "AppUser",
+              entityId: user.id,
+              detail: "Inicio de sesión exitoso",
+              ...metadata,
+            },
+          }),
+        ]);
+        break;
+      } catch (error: unknown) {
+        const isWriteConflict = error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034';
+        if (!isWriteConflict || attempt === 2) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 100 * (attempt + 1)));
+      }
+    }
 
     return {
       ...this.tokens.issueAccessToken(this.baseClaims(user)),
@@ -238,7 +250,7 @@ export class AuthService {
       session.user.status !== AccessStatus.ACTIVE
     ) {
       throw new UnauthorizedException(
-        'La sesión de renovación venció o fue revocada.',
+        "La sesión de renovación venció o fue revocada.",
       );
     }
 
@@ -278,10 +290,37 @@ export class AuthService {
 
   async logout(refreshToken: string) {
     const tokenHash = this.tokens.hashRefreshToken(refreshToken);
-    await this.prisma.authSession.updateMany({
-      where: { tokenHash, revokedAt: null },
-      data: { revokedAt: new Date() },
+    const session = await this.prisma.authSession.findUnique({
+      where: { tokenHash },
+      select: { id: true, userId: true, revokedAt: true },
     });
+    if (!session || session.revokedAt) return { success: true };
+
+    const now = new Date();
+    // Access JWTs are stateless. Incrementing tokenVersion is the server-side
+    // revocation switch that invalidates the current access token immediately
+    // (and all other access tokens for this account), while the refresh session
+    // is revoked as well.
+    await this.prisma.$transaction([
+      this.prisma.appUser.update({
+        where: { id: session.userId },
+        data: { tokenVersion: { increment: 1 } },
+      }),
+      this.prisma.authSession.updateMany({
+        where: { userId: session.userId, revokedAt: null },
+        data: { revokedAt: now, lastUsedAt: now },
+      }),
+      this.prisma.auditEvent.create({
+        data: {
+          actorUserId: session.userId,
+          requestId: randomUUID(),
+          action: "AUTH_LOGOUT",
+          entityType: "AuthSession",
+          entityId: session.id,
+          detail: "Cierre de sesión: JWT y sesiones de renovación invalidados",
+        },
+      }),
+    ]);
     return { success: true };
   }
 
@@ -300,10 +339,10 @@ export class AuthService {
         data: {
           actorUserId: auth.userId,
           requestId: randomUUID(),
-          action: 'AUTH_LOGOUT_ALL',
-          entityType: 'AppUser',
+          action: "AUTH_LOGOUT_ALL",
+          entityType: "AppUser",
           entityId: auth.userId,
-          detail: 'Cierre de todas las sesiones activas',
+          detail: "Cierre de todas las sesiones activas",
         },
       }),
     ]);
@@ -321,11 +360,11 @@ export class AuthService {
       select: { id: true, passwordHash: true },
     });
     if (!(await this.passwords.verify(currentPassword, user.passwordHash))) {
-      throw new UnauthorizedException('La contraseña actual es incorrecta.');
+      throw new UnauthorizedException("La contraseña actual es incorrecta.");
     }
     if (await this.passwords.verify(newPassword, user.passwordHash)) {
       throw new ForbiddenException(
-        'La contraseña nueva debe ser diferente de la actual.',
+        "La contraseña nueva debe ser diferente de la actual.",
       );
     }
 
@@ -348,10 +387,10 @@ export class AuthService {
         data: {
           actorUserId: auth.userId,
           requestId: randomUUID(),
-          action: 'AUTH_PASSWORD_CHANGED',
-          entityType: 'AppUser',
+          action: "AUTH_PASSWORD_CHANGED",
+          entityType: "AppUser",
           entityId: auth.userId,
-          detail: 'Contraseña actualizada y sesiones revocadas',
+          detail: "Contraseña actualizada y sesiones revocadas",
           ...metadata,
         },
       }),
@@ -380,12 +419,13 @@ export class AuthService {
   async listContexts(auth: AuthPrincipal) {
     if (auth.platformRole === PlatformRole.ROOT) {
       const communities = await this.prisma.community.findMany({
-        orderBy: { name: 'asc' },
+        orderBy: { name: "asc" },
         select: {
           id: true,
           name: true,
           legalName: true,
           rif: true,
+          address: true,
           status: true,
           client: { select: { standing: true } },
           activeLicense: { select: { status: true, periodEnd: true } },
@@ -396,12 +436,13 @@ export class AuthService {
         name: community.name,
         legalName: community.legalName,
         rif: community.rif,
+        address: community.address,
         status: community.status,
         standing: community.client.standing,
         license: community.activeLicense,
-        roleCode: 'ROOT',
-        scopes: ['*'],
-        workspaces: ['*'],
+        roleCode: "ROOT",
+        scopes: ["*"],
+        workspaces: ["*"],
       }));
     }
 
@@ -415,11 +456,11 @@ export class AuthService {
         startsOn: { lte: now },
         OR: [{ endsOn: null }, { endsOn: { gte: today } }],
       },
-      orderBy: { community: { name: 'asc' } },
+      orderBy: { community: { name: "asc" } },
       include: {
         workspaces: {
           where: {
-            status: 'ACTIVE',
+            status: "ACTIVE",
             startsOn: { lte: now },
             OR: [{ endsOn: null }, { endsOn: { gte: today } }],
           },
@@ -430,6 +471,7 @@ export class AuthService {
             name: true,
             legalName: true,
             rif: true,
+            address: true,
             status: true,
           },
         },
@@ -446,7 +488,7 @@ export class AuthService {
           this.prisma.ownership.findMany({
             where: {
               personId,
-              status: 'ACTIVE',
+              status: "ACTIVE",
               OR: [{ endsOn: null }, { endsOn: { gte: today } }],
             },
             select: { communityId: true },
@@ -454,7 +496,7 @@ export class AuthService {
           this.prisma.employment.findMany({
             where: {
               personId,
-              status: 'ACTIVE',
+              status: "ACTIVE",
               OR: [{ endsOn: null }, { endsOn: { gte: today } }],
             },
             select: { communityId: true },
@@ -462,44 +504,44 @@ export class AuthService {
           this.prisma.boardAppointment.findMany({
             where: {
               personId,
-              status: 'ACTIVE',
+              status: "ACTIVE",
               OR: [{ endsOn: null }, { endsOn: { gte: today } }],
             },
             select: { communityId: true },
           }),
         ])
-      : [[], [], []] as const;
+      : ([[], [], []] as const);
     const [ownerships, employments, boardAppointments] = relationships;
     return access.map((item) => {
       const relationTypes: string[] = [];
       if (ownerships.some((entry) => entry.communityId === item.communityId)) {
-        relationTypes.push('OWNER');
+        relationTypes.push("OWNER");
       }
       if (employments.some((entry) => entry.communityId === item.communityId)) {
-        relationTypes.push('STAFF');
+        relationTypes.push("STAFF");
       }
       if (
         boardAppointments.some(
           (entry) => entry.communityId === item.communityId,
         )
       ) {
-        relationTypes.push('BOARD_MEMBER');
+        relationTypes.push("BOARD_MEMBER");
       }
-      if (item.roleCode.toUpperCase().includes('ADMIN')) {
-        relationTypes.push('ADMINISTRATOR');
+      if (item.roleCode.toUpperCase().includes("ADMIN")) {
+        relationTypes.push("ADMINISTRATOR");
       }
+      const scopes = this.parseScopes(item.scopes);
       return {
         communityId: item.community.id,
         name: item.community.name,
         legalName: item.community.legalName,
         rif: item.community.rif,
+        address: item.community.address,
         status: item.community.status,
         roleCode: item.roleCode,
         relationTypes,
-        scopes: this.parseScopes(item.scopes),
-        workspaces: item.workspaces.map(
-          (assignment) => assignment.workspaceCode,
-        ),
+        scopes,
+        workspaces: resolveCommunityWorkspaceCodes(item.workspaces, scopes),
       };
     });
   }
@@ -530,13 +572,13 @@ export class AuthService {
         select: { id: true },
       });
       if (!community) {
-        throw new ForbiddenException('La comunidad seleccionada no existe.');
+        throw new ForbiddenException("La comunidad seleccionada no existe.");
       }
       return {
         communityId,
-        communityRole: 'ROOT',
-        scopes: ['*'],
-        workspaces: ['*'],
+        communityRole: "ROOT",
+        scopes: ["*"],
+        workspaces: ["*"],
       };
     }
 
@@ -551,11 +593,11 @@ export class AuthService {
         startsOn: { lte: now },
         OR: [{ endsOn: null }, { endsOn: { gte: today } }],
       },
-      orderBy: { createdAt: 'asc' },
+      orderBy: { createdAt: "asc" },
       include: {
         workspaces: {
           where: {
-            status: 'ACTIVE',
+            status: "ACTIVE",
             startsOn: { lte: now },
             OR: [{ endsOn: null }, { endsOn: { gte: today } }],
           },
@@ -564,16 +606,15 @@ export class AuthService {
     });
     if (!access) {
       throw new ForbiddenException(
-        'No tienes acceso vigente a esta comunidad.',
+        "No tienes acceso vigente a esta comunidad.",
       );
     }
+    const scopes = this.parseScopes(access.scopes);
     return {
       communityId,
       communityRole: access.roleCode,
-      scopes: this.parseScopes(access.scopes),
-      workspaces: access.workspaces.map(
-        (assignment) => assignment.workspaceCode,
-      ),
+      scopes,
+      workspaces: resolveCommunityWorkspaceCodes(access.workspaces, scopes),
     };
   }
 
@@ -616,7 +657,7 @@ export class AuthService {
 
   private parseScopes(value: Prisma.JsonValue): string[] {
     return Array.isArray(value)
-      ? value.filter((item): item is string => typeof item === 'string')
+      ? value.filter((item): item is string => typeof item === "string")
       : [];
   }
 }

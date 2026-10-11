@@ -1,0 +1,20 @@
+CREATE TABLE `PaymentApplication` (
+  `id` VARCHAR(191) NOT NULL,
+  `communityId` VARCHAR(191) NOT NULL,
+  `ownerPaymentId` VARCHAR(191) NOT NULL,
+  `chargeNoticeAllocationId` VARCHAR(191) NOT NULL,
+  `functionalAmount` DECIMAL(18,2) NOT NULL,
+  `functionalCurrency` CHAR(3) NOT NULL DEFAULT 'USD',
+  `appliedAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `appliedById` VARCHAR(191) NOT NULL,
+  `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  INDEX `PaymentApplication_communityId_appliedAt_idx` (`communityId`, `appliedAt`),
+  INDEX `PaymentApplication_ownerPaymentId_idx` (`ownerPaymentId`),
+  INDEX `PaymentApplication_chargeNoticeAllocationId_idx` (`chargeNoticeAllocationId`),
+  INDEX `PaymentApplication_appliedById_idx` (`appliedById`),
+  CONSTRAINT `PaymentApplication_communityId_fkey` FOREIGN KEY (`communityId`) REFERENCES `Community`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `PaymentApplication_ownerPaymentId_fkey` FOREIGN KEY (`ownerPaymentId`) REFERENCES `OwnerPayment`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `PaymentApplication_chargeNoticeAllocationId_fkey` FOREIGN KEY (`chargeNoticeAllocationId`) REFERENCES `ChargeNoticeAllocation`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `PaymentApplication_appliedById_fkey` FOREIGN KEY (`appliedById`) REFERENCES `AppUser`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;

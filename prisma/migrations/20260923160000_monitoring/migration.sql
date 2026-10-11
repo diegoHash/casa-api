@@ -1,0 +1,22 @@
+CREATE TABLE `MonitoringError` (
+  `id` VARCHAR(191) NOT NULL,
+  `occurredAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `statusCode` INTEGER NOT NULL,
+  `method` VARCHAR(10) NOT NULL,
+  `path` VARCHAR(1000) NOT NULL,
+  `message` VARCHAR(2000) NOT NULL,
+  `stack` LONGTEXT NULL,
+  `stackTruncated` BOOLEAN NOT NULL DEFAULT false,
+  `requestId` VARCHAR(80) NOT NULL,
+  `ipAddress` VARCHAR(64) NULL,
+  `userId` VARCHAR(191) NULL,
+  `userEmail` VARCHAR(190) NULL,
+  `communityId` VARCHAR(191) NULL,
+  `communityName` VARCHAR(160) NULL,
+  INDEX `MonitoringError_occurredAt_idx` (`occurredAt`),
+  INDEX `MonitoringError_statusCode_occurredAt_idx` (`statusCode`, `occurredAt`),
+  INDEX `MonitoringError_communityId_occurredAt_idx` (`communityId`, `occurredAt`),
+  INDEX `MonitoringError_userId_occurredAt_idx` (`userId`, `occurredAt`),
+  INDEX `MonitoringError_requestId_idx` (`requestId`),
+  PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;

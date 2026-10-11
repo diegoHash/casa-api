@@ -1,14 +1,9 @@
 import { IsNotEmpty, IsString, MaxLength, MinLength } from 'class-validator';
 
-export class DeleteImportBatchDto {
+export class RevokeCommunityAccessDto {
   @IsString()
   @IsNotEmpty()
-  @MaxLength(255)
-  confirmation!: string;
-
-  @IsString()
-  @IsNotEmpty()
-  @MinLength(12)
+  @MinLength(8)
   @MaxLength(500)
   reason!: string;
 }

@@ -137,10 +137,12 @@ describe('AccountingService', () => {
         });
       },
     );
-    const service = serviceWith({
+    const prismaMock = {
       ledgerAccount: { findUnique: vi.fn(), create },
       auditEvent: { create: vi.fn() },
-    });
+      $transaction: (fn: (tx: unknown) => unknown) => fn(prismaMock),
+    };
+    const service = serviceWith(prismaMock);
 
     await service.createAccount('community-a', 'actor-a', {
       code: '1101',
@@ -154,5 +156,63 @@ describe('AccountingService', () => {
     });
 
     expect(normalBalances).toEqual(['DEBIT', 'CREDIT']);
+  });
+
+  it('marca la cuenta padre como agrupadora para impedirle movimientos', async () => {
+    const update = vi.fn().mockResolvedValue({});
+    const prismaMock = {
+      ledgerAccount: {
+        findUnique: vi.fn(),
+        findFirst: vi.fn().mockResolvedValue({ id: 'parent', journalLines: [] }),
+        create: vi.fn().mockResolvedValue({ id: 'child' }),
+        update,
+      },
+      auditEvent: { create: vi.fn() },
+      $transaction: (fn: (tx: unknown) => unknown) => fn(prismaMock),
+    };
+    const service = serviceWith(prismaMock);
+
+    await service.createAccount('community-a', 'actor-a', {
+      code: '110101',
+      name: 'Banco principal',
+      type: LedgerAccountType.ASSET,
+      parentId: 'parent',
+    });
+
+    expect(update).toHaveBeenCalledWith({
+      where: { id: 'parent' },
+      data: { acceptsEntries: false },
+    });
+  });
+
+  it('acumula en la agrupadora únicamente los movimientos de sus hijas', async () => {
+    const service = serviceWith({
+      ledgerAccount: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: 'group', code: '1100', name: 'Bancos', type: LedgerAccountType.ASSET,
+            normalBalance: 'DEBIT', acceptsEntries: false, parentId: null,
+          },
+          {
+            id: 'child', code: '1101', name: 'Banco principal', type: LedgerAccountType.ASSET,
+            normalBalance: 'DEBIT', acceptsEntries: true, parentId: 'group',
+          },
+        ]),
+      },
+      journalLine: {
+        findMany: vi.fn().mockResolvedValue([
+          { accountId: 'child', debit: new Prisma.Decimal(100), credit: new Prisma.Decimal(0) },
+        ]),
+      },
+    });
+
+    const result = await service.getTrialBalance('community-a');
+
+    expect(result.rows.find((row) => row.id === 'group')).toMatchObject({
+      debit: 100,
+      credit: 0,
+      finalBalance: 100,
+    });
+    expect(result.totals).toMatchObject({ debit: 100, credit: 0 });
   });
 });

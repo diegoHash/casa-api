@@ -24,6 +24,13 @@ enum LicenseStatus {
   EXPIRED
 }
 
+enum LicensePaymentMethod {
+  BANK_TRANSFER
+  MOBILE_PAYMENT
+  CASH
+  OTHER
+}
+
 enum CommunityStatus {
   DRAFT
   ACTIVE
@@ -55,6 +62,9 @@ enum PropertyKind {
   APARTMENT
   TOWNHOUSE
   COMMERCIAL
+  HOUSE
+  QUINTA
+  PENTHOUSE
 }
 
 enum DocumentType {
@@ -108,6 +118,11 @@ enum ChargeNoticeStatus {
 }
 
 enum OwnerPaymentStatus {
+  REPORTED
+  RECONCILED
+  REJECTED
+  // Historical states retained only so existing records remain readable.
+  // New payment flows must use the state machine in billing/owner-payment-state.machine.ts.
   POSTED
   REVERSED
 }
@@ -154,6 +169,40 @@ enum JournalEntrySource {
   PURCHASE
   FUND
   ADVANCE
+}
+
+enum PayableCategory {
+  SECURITY
+  ELEVATOR_MAINTENANCE
+  WASTE_COLLECTION
+  GARDENING
+  UTILITIES
+  PAYROLL
+  PROFESSIONAL_FEES
+  REPAIRS_MATERIALS
+  TAXES
+  SOCIAL_SECURITY
+  INSURANCE
+  RENT
+  TELECOMMUNICATIONS
+  LEGAL_SERVICES
+  ACCOUNTING_SERVICES
+  SUPPLIES
+  TRANSPORT
+  OTHER
+}
+
+enum PayableStatus {
+  PENDING
+  PARTIALLY_PAID
+  PAID
+  VOID
+}
+
+enum PayableReminderStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
 }
 
 enum OnboardingStatus {
@@ -233,6 +282,11 @@ enum ServiceAuthorizationStatus {
   REJECTED
 }
 
+enum AccessDirection {
+  ENTRY
+  EXIT
+}
+
 enum CommunicationStatus {
   DRAFT
   PUBLISHED
@@ -251,42 +305,48 @@ enum CommunicationDeliveryStatus {
 }
 
 model Client {
-  id                 String          @id @default(cuid())
-  name               String          @db.VarChar(160)
-  legalName          String          @db.VarChar(220)
-  rif                String          @unique @db.VarChar(20)
-  contactName        String          @db.VarChar(160)
-  contactEmail       String          @db.VarChar(190)
-  contactPhone       String          @db.VarChar(40)
-  standing           ClientStanding  @default(ONBOARDING)
-  onboardingProgress Int             @default(0)
-  joinedAt           DateTime        @default(now())
-  createdAt          DateTime        @default(now())
-  updatedAt          DateTime        @updatedAt
+  id                 String           @id @default(cuid())
+  name               String           @db.VarChar(160)
+  legalName          String           @db.VarChar(220)
+  rif                String           @unique @db.VarChar(20)
+  contactName        String           @db.VarChar(160)
+  contactEmail       String           @db.VarChar(190)
+  contactPhone       String           @db.VarChar(40)
+  standing           ClientStanding   @default(ONBOARDING)
+  onboardingProgress Int              @default(0)
+  joinedAt           DateTime         @default(now())
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
   community          Community?
   licenses           License[]
+  licensePayments    LicensePayment[]
   onboarding         OnboardingCase?
 
   @@index([standing])
 }
 
 model License {
-  id                        String        @id @default(cuid())
+  id                        String           @id @default(cuid())
   clientId                  String
-  status                    LicenseStatus @default(ACTIVE)
-  autoRenewOnReconciliation Boolean       @default(true)
-  monthlyFee                Decimal       @db.Decimal(14, 2)
-  currency                  Currency      @default(USD)
+  status                    LicenseStatus    @default(ACTIVE)
+  autoRenewOnReconciliation Boolean          @default(true)
+  monthlyFee                Decimal          @db.Decimal(14, 2)
+  currency                  Currency         @default(USD)
   periodStart               DateTime
   periodEnd                 DateTime
   graceUntil                DateTime
+  graceDays                 Int              @default(5)
+  isTrial                   Boolean          @default(false)
+  trialFrom                 DateTime?
+  trialUntil                DateTime?
   lastReconciledAt          DateTime?
   revokedAt                 DateTime?
-  revokedReason             String?       @db.VarChar(500)
-  createdAt                 DateTime      @default(now())
-  updatedAt                 DateTime      @updatedAt
-  client                    Client        @relation(fields: [clientId], references: [id], onDelete: Restrict)
-  activeForCommunity        Community?    @relation("ActiveCommunityLicense")
+  revokedReason             String?          @db.VarChar(500)
+  createdAt                 DateTime         @default(now())
+  updatedAt                 DateTime         @updatedAt
+  client                    Client           @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  activeForCommunity        Community?       @relation("ActiveCommunityLicense")
+  payments                  LicensePayment[]
 
   @@index([clientId, status])
   @@index([periodEnd])
@@ -326,6 +386,8 @@ model Community {
   expenseCategories       ExpenseCategory[]
   expenseConcepts         ExpenseConcept[]
   vendors                 Vendor[]
+  vendorPayables          VendorPayable[]
+  payableReminders        PayableReminder[]
   billingPeriods          BillingPeriod[]
   periodExpenses          PeriodExpense[]
   chargeNotices           ChargeNotice[]
@@ -342,11 +404,88 @@ model Community {
   serviceIncidents        ServiceIncident[]
   serviceIncidentHistory  ServiceIncidentHistory[]
   serviceAuthorizations   ServiceAuthorization[]
+  accessEvents            AccessEvent[]
   communications          CommunityCommunication[]
   communicationRecipients CommunicationRecipient[]
   ownerPayments           OwnerPayment[]
+  paymentApplications     PaymentApplication[]
+  invitations             CommunityInvitation[]
+  registrationRequests    OwnerRegistrationRequest[]
+  initializationCase      InitializationCase?
+  licensePayments         LicensePayment[]
 
   @@index([status])
+}
+
+model LicensePayment {
+  id            String               @id @default(cuid())
+  communityId   String
+  clientId      String
+  licenseId     String
+  amount        Decimal              @db.Decimal(14, 2)
+  exchangeRate  Decimal              @db.Decimal(18, 6)
+  currency      Currency             @default(USD)
+  paymentMethod LicensePaymentMethod
+  reference     String               @db.VarChar(160)
+  paidAt        DateTime
+  notes         String?              @db.VarChar(500)
+  createdById   String
+  createdAt     DateTime             @default(now())
+  community     Community            @relation(fields: [communityId], references: [id], onDelete: Restrict)
+  client        Client               @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  license       License              @relation(fields: [licenseId], references: [id], onDelete: Restrict)
+  createdBy     AppUser              @relation(fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([communityId, paidAt])
+  @@index([clientId, paidAt])
+  @@index([licenseId, paidAt])
+  @@index([reference])
+}
+
+model InitializationCase {
+  id             String              @id @default(cuid())
+  communityId    String              @unique
+  cutoverDate    DateTime?
+  historyFrom    DateTime?
+  historyTo      DateTime?
+  status         String              @default("DRAFT") @db.VarChar(20)
+  appliedAt      DateTime?
+  journalEntryId String?             @unique
+  createdById    String
+  createdAt      DateTime            @default(dbgenerated("CURRENT_TIMESTAMP(3)"))
+  updatedAt      DateTime            @default(dbgenerated("CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)"))
+  community      Community           @relation(fields: [communityId], references: [id], onDelete: Restrict)
+  journalEntry   JournalEntry?       @relation(fields: [journalEntryId], references: [id], onDelete: Restrict)
+  rows           InitializationRow[]
+
+  @@index([status, cutoverDate])
+}
+
+model InitializationRow {
+  id                    String             @id @default(cuid())
+  initializationId      String
+  kind                  String             @db.VarChar(30)
+  externalRef           String             @db.VarChar(160)
+  propertyId            String?
+  vendorId              String?
+  eventDate             DateTime
+  description           String             @db.VarChar(500)
+  amount                Decimal            @db.Decimal(18, 2)
+  currency              Currency
+  metadata              Json?
+  operationalEntityType String?            @db.VarChar(40)
+  operationalEntityId   String?            @db.VarChar(191)
+  status                String             @default("PENDING") @db.VarChar(20)
+  createdAt             DateTime           @default(dbgenerated("CURRENT_TIMESTAMP(3)"))
+  updatedAt             DateTime           @default(dbgenerated("CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)"))
+  initialization        InitializationCase @relation(fields: [initializationId], references: [id], onDelete: Cascade)
+  property              Property?          @relation(fields: [propertyId], references: [id], onDelete: Restrict)
+  vendor                Vendor?            @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+
+  @@unique([initializationId, kind, externalRef])
+  @@index([initializationId, kind, status])
+  @@index([propertyId, eventDate])
+  @@index([vendorId, eventDate])
 }
 
 model Person {
@@ -430,6 +569,8 @@ model Property {
   currentAliquot          Decimal?                 @db.Decimal(9, 6)
   maximumOccupancy        Int?
   braceletQuota           Int                      @default(0)
+  parkingSpace            String?                  @db.VarChar(120)
+  parkingCapacity         Int?
   status                  RecordStatus             @default(ACTIVE)
   createdAt               DateTime                 @default(now())
   updatedAt               DateTime                 @updatedAt
@@ -443,6 +584,8 @@ model Property {
   serviceAuthorizations   ServiceAuthorization[]
   communicationRecipients CommunicationRecipient[]
   ownerPayments           OwnerPayment[]
+  initializationRows      InitializationRow[]
+  accessEvents            AccessEvent[]
 
   @@unique([communityId, code])
   @@index([communityId, kind, status])
@@ -594,15 +737,15 @@ model PaymentMethod {
 }
 
 model ExpenseCategory {
-  id          String          @id @default(cuid())
+  id          String           @id @default(cuid())
   communityId String
-  code        String          @db.VarChar(40)
-  name        String          @db.VarChar(160)
-  description String?         @db.VarChar(500)
-  status      RecordStatus    @default(ACTIVE)
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
-  community   Community       @relation(fields: [communityId], references: [id], onDelete: Restrict)
+  code        String           @db.VarChar(40)
+  name        String           @db.VarChar(160)
+  description String?          @db.VarChar(500)
+  status      RecordStatus     @default(ACTIVE)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  community   Community        @relation(fields: [communityId], references: [id], onDelete: Restrict)
   concepts    ExpenseConcept[]
 
   @@unique([communityId, code])
@@ -610,18 +753,20 @@ model ExpenseCategory {
 }
 
 model ExpenseConcept {
-  id          String          @id @default(cuid())
-  communityId String
-  categoryId  String
-  code        String          @db.VarChar(40)
-  name        String          @db.VarChar(160)
-  description String?         @db.VarChar(500)
-  status      RecordStatus    @default(ACTIVE)
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
-  community   Community       @relation(fields: [communityId], references: [id], onDelete: Restrict)
-  category    ExpenseCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
-  expenses    PeriodExpense[]
+  id                      String          @id @default(cuid())
+  communityId             String
+  categoryId              String
+  code                    String          @db.VarChar(40)
+  name                    String          @db.VarChar(160)
+  description             String?         @db.VarChar(500)
+  defaultExpenseAccountId String?
+  status                  RecordStatus    @default(ACTIVE)
+  createdAt               DateTime        @default(now())
+  updatedAt               DateTime        @updatedAt
+  community               Community       @relation(fields: [communityId], references: [id], onDelete: Restrict)
+  category                ExpenseCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  defaultExpenseAccount   LedgerAccount?  @relation("ExpenseConceptDefaultAccount", fields: [defaultExpenseAccountId], references: [id], onDelete: Restrict)
+  expenses                PeriodExpense[]
 
   @@unique([communityId, code])
   @@index([communityId, status])
@@ -629,20 +774,81 @@ model ExpenseConcept {
 }
 
 model Vendor {
-  id          String       @id @default(cuid())
-  communityId String
-  legalName   String       @db.VarChar(220)
-  document    String       @db.VarChar(40)
-  address     String?      @db.VarChar(500)
-  phone       String?      @db.VarChar(40)
-  email       String?      @db.VarChar(190)
-  status      RecordStatus @default(ACTIVE)
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  community   Community    @relation(fields: [communityId], references: [id], onDelete: Restrict)
+  id                 String              @id @default(cuid())
+  communityId        String
+  legalName          String              @db.VarChar(220)
+  document           String              @db.VarChar(40)
+  address            String?             @db.VarChar(500)
+  phone              String?             @db.VarChar(40)
+  email              String?             @db.VarChar(190)
+  status             RecordStatus        @default(ACTIVE)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  community          Community           @relation(fields: [communityId], references: [id], onDelete: Restrict)
+  initializationRows InitializationRow[]
+  payables           VendorPayable[]
 
   @@unique([communityId, document])
   @@index([communityId, status, legalName])
+}
+
+model VendorPayable {
+  id                    String            @id @default(cuid())
+  communityId           String
+  vendorId              String?
+  category              PayableCategory
+  categoryLabel         String?           @db.VarChar(160)
+  supplierName          String            @db.VarChar(220)
+  supplierDocument      String?           @db.VarChar(40)
+  description           String            @db.VarChar(500)
+  invoiceNumber         String?           @db.VarChar(100)
+  issueDate             DateTime
+  dueDate               DateTime
+  amount                Decimal           @db.Decimal(18, 2)
+  amountPaid            Decimal           @default(0) @db.Decimal(18, 2)
+  currency              Currency
+  status                PayableStatus     @default(PENDING)
+  notes                 String?           @db.VarChar(1000)
+  expenseAccountId      String?
+  liabilityAccountId    String?
+  paymentAccountId      String?
+  initialJournalEntryId String?           @unique
+  paymentJournalEntryId String?           @unique
+  paidAt                DateTime?
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+  community             Community         @relation(fields: [communityId], references: [id], onDelete: Restrict)
+  vendor                Vendor?           @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+  expenseAccount        LedgerAccount?    @relation("VendorPayableExpenseAccount", fields: [expenseAccountId], references: [id], onDelete: Restrict)
+  liabilityAccount      LedgerAccount?    @relation("VendorPayableLiabilityAccount", fields: [liabilityAccountId], references: [id], onDelete: Restrict)
+  paymentAccount        LedgerAccount?    @relation("VendorPayablePaymentAccount", fields: [paymentAccountId], references: [id], onDelete: Restrict)
+  initialJournalEntry   JournalEntry?     @relation("VendorPayableInitialEntry", fields: [initialJournalEntryId], references: [id], onDelete: Restrict)
+  paymentJournalEntry   JournalEntry?     @relation("VendorPayablePaymentEntry", fields: [paymentJournalEntryId], references: [id], onDelete: Restrict)
+  reminders             PayableReminder[]
+
+  @@index([communityId, status, dueDate])
+  @@index([communityId, category, status])
+  @@index([vendorId, dueDate])
+}
+
+model PayableReminder {
+  id          String                @id @default(cuid())
+  communityId String
+  payableId   String
+  createdById String
+  remindAt    DateTime
+  message     String?               @db.VarChar(300)
+  status      PayableReminderStatus @default(ACTIVE)
+  completedAt DateTime?
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+  community   Community             @relation(fields: [communityId], references: [id], onDelete: Restrict)
+  payable     VendorPayable         @relation(fields: [payableId], references: [id], onDelete: Cascade)
+  createdBy   AppUser               @relation(fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([communityId, status, remindAt])
+  @@index([communityId, payableId, status])
+  @@index([createdById, status, remindAt])
 }
 
 model BillingPeriod {
@@ -717,6 +923,7 @@ model ChargeNotice {
   totalComponentsVes     Decimal                  @db.Decimal(18, 2)
   totalCommunityVes      Decimal                  @db.Decimal(18, 2)
   totalCommunityUsd      Decimal                  @db.Decimal(18, 2)
+  dueDate                DateTime
   preparedAt             DateTime?
   issuedAt               DateTime?
   createdById            String
@@ -754,18 +961,18 @@ model ChargeNoticeComponent {
 }
 
 model ChargeNoticeAllocation {
-  id                String         @id @default(cuid())
-  chargeNoticeId    String
-  propertyId        String
-  aliquotSnapshot   Decimal        @db.Decimal(9, 6)
-  expenseShareVes   Decimal        @db.Decimal(18, 2)
-  componentShareVes Decimal        @db.Decimal(18, 2)
-  totalVes          Decimal        @db.Decimal(18, 2)
-  totalUsd          Decimal        @db.Decimal(18, 2)
-  createdAt         DateTime       @default(now())
-  chargeNotice      ChargeNotice   @relation(fields: [chargeNoticeId], references: [id], onDelete: Cascade)
-  property          Property       @relation(fields: [propertyId], references: [id], onDelete: Restrict)
-  ownerPayments     OwnerPayment[]
+  id                  String               @id @default(cuid())
+  chargeNoticeId      String
+  propertyId          String
+  aliquotSnapshot     Decimal              @db.Decimal(9, 6)
+  expenseShareVes     Decimal              @db.Decimal(18, 2)
+  componentShareVes   Decimal              @db.Decimal(18, 2)
+  totalVes            Decimal              @db.Decimal(18, 2)
+  totalUsd            Decimal              @db.Decimal(18, 2)
+  createdAt           DateTime             @default(now())
+  chargeNotice        ChargeNotice         @relation(fields: [chargeNoticeId], references: [id], onDelete: Cascade)
+  property            Property             @relation(fields: [propertyId], references: [id], onDelete: Restrict)
+  paymentApplications PaymentApplication[]
 
   @@unique([chargeNoticeId, propertyId])
   @@index([propertyId])
@@ -773,7 +980,7 @@ model ChargeNoticeAllocation {
 
 model CommunityAccountingSettings {
   communityId        String    @id
-  functionalCurrency Currency  @default(VES)
+  functionalCurrency Currency  @default(USD)
   nextJournalNumber  Int       @default(1)
   nextReceiptNumber  Int       @default(1)
   createdAt          DateTime  @default(now())
@@ -782,32 +989,33 @@ model CommunityAccountingSettings {
 }
 
 model LedgerAccount {
-  id                            String            @id @default(cuid())
-  communityId                   String
-  parentId                      String?
-  bankAccountId                 String?           @unique
-  code                          String            @db.VarChar(40)
-  name                          String            @db.VarChar(180)
-  description                   String?           @db.VarChar(500)
-  type                          LedgerAccountType
-  normalBalance                 NormalBalance
-  currency                      Currency?
-  acceptsEntries                Boolean           @default(true)
-  status                        RecordStatus      @default(ACTIVE)
-  createdAt                     DateTime          @default(now())
-  updatedAt                     DateTime          @updatedAt
-  community                     Community         @relation(fields: [communityId], references: [id], onDelete: Restrict)
-  parent                        LedgerAccount?    @relation("LedgerAccountHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
-  children                      LedgerAccount[]   @relation("LedgerAccountHierarchy")
-  bankAccount                   BankAccount?      @relation(fields: [bankAccountId], references: [id], onDelete: Restrict)
-  journalLines                  JournalLine[]
-  expenseDebitRecords           PeriodExpense[]   @relation("PeriodExpenseExpenseAccount")
-  expensePaymentRecords         PeriodExpense[]   @relation("PeriodExpensePaymentAccount")
-  chargeNoticesReceivable       ChargeNotice[]    @relation("ChargeNoticeReceivableAccount")
-  chargeNoticesIncome           ChargeNotice[]    @relation("ChargeNoticeIncomeAccount")
-  ownerPaymentReceiptRecords    OwnerPayment[]    @relation("OwnerPaymentReceiptAccount")
-  ownerPaymentReceivableRecords OwnerPayment[]    @relation("OwnerPaymentReceivableAccount")
-  ownerPaymentAdvanceRecords    OwnerPayment[]    @relation("OwnerPaymentAdvanceAccount")
+  id                        String            @id @default(cuid())
+  communityId               String
+  parentId                  String?
+  bankAccountId             String?           @unique
+  code                      String            @db.VarChar(40)
+  name                      String            @db.VarChar(180)
+  description               String?           @db.VarChar(500)
+  type                      LedgerAccountType
+  normalBalance             NormalBalance
+  currency                  Currency?
+  acceptsEntries            Boolean           @default(true)
+  status                    RecordStatus      @default(ACTIVE)
+  createdAt                 DateTime          @default(now())
+  updatedAt                 DateTime          @updatedAt
+  community                 Community         @relation(fields: [communityId], references: [id], onDelete: Restrict)
+  parent                    LedgerAccount?    @relation("LedgerAccountHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
+  children                  LedgerAccount[]   @relation("LedgerAccountHierarchy")
+  bankAccount               BankAccount?      @relation(fields: [bankAccountId], references: [id], onDelete: Restrict)
+  journalLines              JournalLine[]
+  expenseDebitRecords       PeriodExpense[]   @relation("PeriodExpenseExpenseAccount")
+  expensePaymentRecords     PeriodExpense[]   @relation("PeriodExpensePaymentAccount")
+  chargeNoticesReceivable   ChargeNotice[]    @relation("ChargeNoticeReceivableAccount")
+  chargeNoticesIncome       ChargeNotice[]    @relation("ChargeNoticeIncomeAccount")
+  payableExpenseRecords     VendorPayable[]   @relation("VendorPayableExpenseAccount")
+  payableLiabilityRecords   VendorPayable[]   @relation("VendorPayableLiabilityAccount")
+  payablePaymentRecords     VendorPayable[]   @relation("VendorPayablePaymentAccount")
+  defaultForExpenseConcepts ExpenseConcept[]  @relation("ExpenseConceptDefaultAccount")
 
   @@unique([communityId, code])
   @@index([communityId, type, status])
@@ -834,31 +1042,33 @@ model AccountingPeriod {
 }
 
 model JournalEntry {
-  id                 String             @id @default(cuid())
-  communityId        String
-  accountingPeriodId String
-  entryNumber        Int?
-  entryDate          DateTime
-  description        String             @db.VarChar(500)
-  source             JournalEntrySource @default(MANUAL)
-  sourceId           String?            @db.VarChar(100)
-  status             JournalEntryStatus @default(DRAFT)
-  postedAt           DateTime?
-  postedById         String?
-  reversedAt         DateTime?
-  reversedById       String?
-  reversalOfId       String?            @unique
-  createdById        String
-  createdAt          DateTime           @default(now())
-  updatedAt          DateTime           @updatedAt
-  community          Community          @relation(fields: [communityId], references: [id], onDelete: Restrict)
-  accountingPeriod   AccountingPeriod   @relation(fields: [accountingPeriodId], references: [id], onDelete: Restrict)
-  reversalOf         JournalEntry?      @relation("JournalEntryReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
-  reversal           JournalEntry?      @relation("JournalEntryReversal")
-  lines              JournalLine[]
-  periodExpense      PeriodExpense?
-  chargeNotice       ChargeNotice?
-  ownerPayment       OwnerPayment?
+  id                  String              @id @default(cuid())
+  communityId         String
+  accountingPeriodId  String
+  entryNumber         Int?
+  entryDate           DateTime
+  description         String              @db.VarChar(500)
+  source              JournalEntrySource  @default(MANUAL)
+  sourceId            String?             @db.VarChar(100)
+  status              JournalEntryStatus  @default(DRAFT)
+  postedAt            DateTime?
+  postedById          String?
+  reversedAt          DateTime?
+  reversedById        String?
+  reversalOfId        String?             @unique
+  createdById         String
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  community           Community           @relation(fields: [communityId], references: [id], onDelete: Restrict)
+  accountingPeriod    AccountingPeriod    @relation(fields: [accountingPeriodId], references: [id], onDelete: Restrict)
+  reversalOf          JournalEntry?       @relation("JournalEntryReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversal            JournalEntry?       @relation("JournalEntryReversal")
+  lines               JournalLine[]
+  periodExpense       PeriodExpense?
+  chargeNotice        ChargeNotice?
+  initializationCase  InitializationCase?
+  payableInitialEntry VendorPayable?      @relation("VendorPayableInitialEntry")
+  payablePaymentEntry VendorPayable?      @relation("VendorPayablePaymentEntry")
 
   @@unique([communityId, entryNumber])
   @@index([communityId, entryDate, status])
@@ -867,52 +1077,49 @@ model JournalEntry {
 }
 
 model OwnerPayment {
-  id                       String                  @id @default(cuid())
-  communityId              String
-  propertyId               String
-  payerPersonId            String?
-  chargeNoticeAllocationId String?
-  paymentMethodId          String?
-  bankAccountId            String?
-  receiptAccountId         String
-  receivableAccountId      String
-  advanceAccountId         String?
-  journalEntryId           String                  @unique
-  receiptNumber            Int
-  amount                   Decimal                 @db.Decimal(18, 2)
-  currency                 Currency
-  exchangeRate             Decimal                 @db.Decimal(18, 6)
-  amountVes                Decimal                 @db.Decimal(18, 2)
-  appliedToNoticeVes       Decimal                 @default(0) @db.Decimal(18, 2)
-  advanceVes               Decimal                 @default(0) @db.Decimal(18, 2)
-  reference                String                  @db.VarChar(160)
-  paidAt                   DateTime
-  notes                    String?                 @db.VarChar(1000)
-  status                   OwnerPaymentStatus      @default(POSTED)
-  createdById              String
-  createdAt                DateTime                @default(now())
-  updatedAt                DateTime                @updatedAt
-  community                Community               @relation(fields: [communityId], references: [id], onDelete: Restrict)
-  property                 Property                @relation(fields: [propertyId], references: [id], onDelete: Restrict)
-  payerPerson              Person?                 @relation(fields: [payerPersonId], references: [id], onDelete: Restrict)
-  chargeNoticeAllocation   ChargeNoticeAllocation? @relation(fields: [chargeNoticeAllocationId], references: [id], onDelete: Restrict)
-  paymentMethod            PaymentMethod?          @relation(fields: [paymentMethodId], references: [id], onDelete: Restrict)
-  bankAccount              BankAccount?            @relation(fields: [bankAccountId], references: [id], onDelete: Restrict)
-  receiptAccount           LedgerAccount           @relation("OwnerPaymentReceiptAccount", fields: [receiptAccountId], references: [id], onDelete: Restrict)
-  receivableAccount        LedgerAccount           @relation("OwnerPaymentReceivableAccount", fields: [receivableAccountId], references: [id], onDelete: Restrict)
-  advanceAccount           LedgerAccount?          @relation("OwnerPaymentAdvanceAccount", fields: [advanceAccountId], references: [id], onDelete: Restrict)
-  journalEntry             JournalEntry            @relation(fields: [journalEntryId], references: [id], onDelete: Restrict)
+  id                      String               @id @default(cuid())
+  communityId             String
+  propertyId              String
+  payerPersonId           String?
+  paymentMethodId         String?
+  bankAccountId           String?
+  exchangeRate            Decimal              @db.Decimal(18, 6)
+  originalAmount          Decimal?             @db.Decimal(18, 2)
+  originalCurrency        String?              @db.Char(3)
+  functionalAmount        Decimal?             @db.Decimal(18, 2)
+  functionalCurrency      String?              @default("USD") @db.Char(3)
+  exchangeRateSource      String?              @db.VarChar(40)
+  exchangeRateEffectiveAt DateTime?
+  exchangeRateReference   String?              @db.VarChar(160)
+  reference               String               @db.VarChar(160)
+  paidAt                  DateTime
+  notes                   String?              @db.VarChar(1000)
+  status                  OwnerPaymentStatus   @default(REPORTED)
+  createdById             String
+  reportedAt              DateTime?
+  reportedById            String?
+  reconciledAt            DateTime?
+  reconciledById          String?
+  createdAt               DateTime             @default(now())
+  updatedAt               DateTime             @updatedAt
+  community               Community            @relation(fields: [communityId], references: [id], onDelete: Restrict)
+  property                Property             @relation(fields: [propertyId], references: [id], onDelete: Restrict)
+  payerPerson             Person?              @relation(fields: [payerPersonId], references: [id], onDelete: Restrict)
+  paymentMethod           PaymentMethod?       @relation(fields: [paymentMethodId], references: [id], onDelete: Restrict)
+  bankAccount             BankAccount?         @relation(fields: [bankAccountId], references: [id], onDelete: Restrict)
+  reportedBy              AppUser?             @relation("OwnerPaymentReportedBy", fields: [reportedById], references: [id], onDelete: Restrict)
+  reconciledBy            AppUser?             @relation("OwnerPaymentReconciledBy", fields: [reconciledById], references: [id], onDelete: Restrict)
+  applications            PaymentApplication[]
 
-  @@unique([communityId, receiptNumber])
   @@index([communityId, paidAt, status])
   @@index([propertyId, paidAt])
   @@index([payerPersonId])
-  @@index([chargeNoticeAllocationId])
   @@index([paymentMethodId])
   @@index([bankAccountId])
-  @@index([receiptAccountId])
-  @@index([receivableAccountId])
-  @@index([advanceAccountId])
+  @@index([communityId, status, reportedAt])
+  @@index([communityId, originalCurrency])
+  @@index([reportedById])
+  @@index([reconciledById])
 }
 
 model JournalLine {
@@ -1034,7 +1241,7 @@ model AppUser {
   tokenVersion            Int                      @default(0)
   createdAt               DateTime                 @default(now())
   updatedAt               DateTime                 @updatedAt
-  person                  Person?                  @relation(fields: [personId, email], references: [id, email], onDelete: Restrict)
+  person                  Person?                  @relation(fields: [personId, email], references: [id, email], onDelete: Restrict, onUpdate: Cascade)
   communities             CommunityAccess[]
   auditEvents             AuditEvent[]
   authSessions            AuthSession[]
@@ -1042,9 +1249,38 @@ model AppUser {
   serviceIncidentHistory  ServiceIncidentHistory[]
   authorizationDecisions  ServiceAuthorization[]
   publishedCommunications CommunityCommunication[]
+  createdInvitations      CommunityInvitation[]
+  reportedOwnerPayments   OwnerPayment[]           @relation("OwnerPaymentReportedBy")
+  reconciledOwnerPayments OwnerPayment[]           @relation("OwnerPaymentReconciledBy")
+  paymentApplications     PaymentApplication[]
+  registeredAccessEvents  AccessEvent[]
+  createdPayableReminders PayableReminder[]
+  createdLicensePayments  LicensePayment[]
 
   @@unique([personId, email])
   @@index([status])
+}
+
+model PaymentApplication {
+  id                       String                 @id @default(cuid())
+  communityId              String
+  ownerPaymentId           String
+  chargeNoticeAllocationId String
+  functionalAmount         Decimal                @db.Decimal(18, 2)
+  functionalCurrency       String                 @default("USD") @db.Char(3)
+  appliedAt                DateTime               @default(now())
+  appliedById              String
+  createdAt                DateTime               @default(now())
+  community                Community              @relation(fields: [communityId], references: [id], onDelete: Restrict)
+  ownerPayment             OwnerPayment           @relation(fields: [ownerPaymentId], references: [id], onDelete: Restrict)
+  chargeNoticeAllocation   ChargeNoticeAllocation @relation(fields: [chargeNoticeAllocationId], references: [id], onDelete: Restrict)
+  appliedBy                AppUser                @relation(fields: [appliedById], references: [id], onDelete: Restrict)
+
+  @@index([communityId, appliedAt])
+  @@index([communityId, functionalCurrency])
+  @@index([ownerPaymentId])
+  @@index([chargeNoticeAllocationId])
+  @@index([appliedById])
 }
 
 model ServiceIncident {
@@ -1090,37 +1326,78 @@ model ServiceIncidentHistory {
 }
 
 model ServiceAuthorization {
-  id               String                       @id @default(cuid())
+  id               String                        @id @default(cuid())
   communityId      String
   propertyId       String
   ownerPersonId    String
   type             ServiceAuthorizationType
-  subject          String                       @db.VarChar(220)
+  subject          String                        @db.VarChar(220)
   validFrom        DateTime
   validUntil       DateTime
-  issuedAt         DateTime                     @default(now())
-  status           ServiceAuthorizationStatus   @default(RECEIVED)
-  vehicleBrand     String?                      @db.VarChar(100)
-  vehicleModel     String?                      @db.VarChar(100)
-  vehicleColor     String?                      @db.VarChar(80)
-  vehiclePlate     String?                      @db.VarChar(40)
-  workDescription  String?                      @db.Text
-  exitPurpose      String?                      @db.VarChar(40)
-  exitItems        String?                      @db.Text
-  rejectionReason  String?                      @db.VarChar(1000)
+  issuedAt         DateTime                      @default(now())
+  status           ServiceAuthorizationStatus    @default(RECEIVED)
+  vehicleBrand     String?                       @db.VarChar(100)
+  vehicleModel     String?                       @db.VarChar(100)
+  vehicleColor     String?                       @db.VarChar(80)
+  vehiclePlate     String?                       @db.VarChar(40)
+  workDescription  String?                       @db.Text
+  exitPurpose      String?                       @db.VarChar(40)
+  exitItems        String?                       @db.Text
+  rejectionReason  String?                       @db.VarChar(1000)
   decidedByUserId  String?
   decidedAt        DateTime?
-  createdAt        DateTime                     @default(now())
-  updatedAt        DateTime                     @updatedAt
-  community        Community                    @relation(fields: [communityId], references: [id], onDelete: Restrict)
-  property         Property                     @relation(fields: [propertyId], references: [id], onDelete: Restrict)
-  owner            Person                       @relation(fields: [ownerPersonId], references: [id], onDelete: Restrict)
-  decidedBy        AppUser?                     @relation(fields: [decidedByUserId], references: [id], onDelete: SetNull)
+  createdAt        DateTime                      @default(now())
+  updatedAt        DateTime                      @updatedAt
+  qrTokenHash      String?                       @unique @db.Char(64)
+  qrIssuedAt       DateTime?
+  community        Community                     @relation(fields: [communityId], references: [id], onDelete: Restrict)
+  property         Property                      @relation(fields: [propertyId], references: [id], onDelete: Restrict)
+  owner            Person                        @relation(fields: [ownerPersonId], references: [id], onDelete: Restrict)
+  decidedBy        AppUser?                      @relation(fields: [decidedByUserId], references: [id], onDelete: SetNull)
   authorizedPeople ServiceAuthorizationPerson[]
+  vehicles         ServiceAuthorizationVehicle[]
+  accessEvents     AccessEvent[]
 
   @@index([communityId, status, issuedAt])
   @@index([communityId, propertyId])
   @@index([decidedByUserId])
+}
+
+model AccessEvent {
+  id              String                @id @default(cuid())
+  communityId     String
+  authorizationId String?
+  propertyId      String?
+  direction       AccessDirection
+  subject         String                @db.VarChar(220)
+  documentNumber  String?               @db.VarChar(40)
+  source          String                @db.VarChar(30)
+  qrValidated     Boolean               @default(false)
+  registeredById  String?
+  notes           String?               @db.VarChar(500)
+  occurredAt      DateTime              @default(now())
+  createdAt       DateTime              @default(now())
+  community       Community             @relation(fields: [communityId], references: [id], onDelete: Restrict)
+  authorization   ServiceAuthorization? @relation(fields: [authorizationId], references: [id], onDelete: Restrict)
+  property        Property?             @relation(fields: [propertyId], references: [id], onDelete: Restrict)
+  registeredBy    AppUser?              @relation(fields: [registeredById], references: [id], onDelete: SetNull)
+
+  @@index([communityId, occurredAt])
+  @@index([communityId, authorizationId])
+  @@index([communityId, propertyId])
+}
+
+model ServiceAuthorizationVehicle {
+  id              String               @id @default(cuid())
+  authorizationId String
+  brand           String?              @db.VarChar(100)
+  model           String?              @db.VarChar(100)
+  color           String?              @db.VarChar(80)
+  plate           String?              @db.VarChar(40)
+  createdAt       DateTime             @default(now())
+  authorization   ServiceAuthorization @relation(fields: [authorizationId], references: [id], onDelete: Cascade)
+
+  @@index([authorizationId])
 }
 
 model ServiceAuthorizationPerson {
@@ -1245,6 +1522,29 @@ model AuthSession {
   @@index([expiresAt])
 }
 
+model MonitoringError {
+  id                String    @id @default(cuid())
+  occurredAt        DateTime  @default(now())
+  statusCode        Int
+  method            String    @db.VarChar(10)
+  path              String    @db.VarChar(1000)
+  message           String    @db.VarChar(2000)
+  stack             String?   @db.LongText
+  stackTruncated    Boolean   @default(false)
+  requestId         String    @db.VarChar(80)
+  ipAddress         String?   @db.VarChar(64)
+  userId            String?
+  userEmail         String?   @db.VarChar(190)
+  communityId       String?
+  communityName     String?   @db.VarChar(160)
+
+  @@index([occurredAt])
+  @@index([statusCode, occurredAt])
+  @@index([communityId, occurredAt])
+  @@index([userId, occurredAt])
+  @@index([requestId])
+}
+
 model AuditEvent {
   id          String     @id @default(cuid())
   communityId String?
@@ -1267,4 +1567,45 @@ model AuditEvent {
   @@index([actorUserId, createdAt])
   @@index([requestId])
   @@index([entityType, entityId])
+}
+
+model CommunityInvitation {
+  id          String    @id @default(cuid())
+  communityId String
+  code        String    @unique @db.VarChar(12)
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  createdById String
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  createdBy   AppUser   @relation(fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([communityId])
+}
+
+model OwnerRegistrationRequest {
+  id              String    @id @default(cuid())
+  communityId     String
+  folioNumber     String    @unique @db.VarChar(32)
+  docType         String    @db.VarChar(10)
+  docNumber       String    @db.VarChar(30)
+  fullName        String    @db.VarChar(120)
+  propertyCode    String    @db.VarChar(50)
+  email           String    @db.VarChar(120)
+  phone           String?   @db.VarChar(30)
+  status          String    @default("PENDING") @db.VarChar(16)
+  personId        String?
+  identityDocumentKey String?   @db.VarChar(1024)
+  identityDocumentVersionId String? @db.VarChar(1024)
+  identityDocumentExpiresAt DateTime?
+  identityDocumentSizeBytes Int?
+  rejectionReason String?   @db.VarChar(500)
+  approvedAt      DateTime?
+  rejectedAt      DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  community       Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@index([communityId, status, createdAt])
+  @@index([identityDocumentExpiresAt])
 }
