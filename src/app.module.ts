@@ -37,7 +37,7 @@ import { ThrottlerModule } from '@nestjs/throttler';
         REFRESH_TOKEN_TTL_DAYS: Joi.number().integer().min(1).default(30),
         ROOT_BOOTSTRAP_EMAIL: Joi.string().email().required(),
         ROOT_BOOTSTRAP_PASSWORD: Joi.string().min(14).required(),
-        PUBLIC_WEB_URL: Joi.string().uri().default('http://localhost:5173'),
+        PUBLIC_WEB_URL: Joi.string().uri().default('https://somoscasa.site'),
         RESEND_API_KEY: Joi.string().pattern(/^re_/).optional().allow(''),
         EMAIL_FROM_ADDRESS: Joi.string().email().optional().allow(''),
         EMAIL_REPLY_TO: Joi.string().email().optional().allow(''),

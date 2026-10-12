@@ -74,7 +74,7 @@ export class AuthService {
     ]);
 
     const webUrl = (
-      this.config.get<string>("PUBLIC_WEB_URL") ?? "http://localhost:5173"
+      this.config.get<string>("PUBLIC_WEB_URL") ?? "https://somoscasa.site"
     ).replace(/\/$/, "");
     const typeQuery = type ? `&type=${encodeURIComponent(type)}` : "";
     await this.email.sendPasswordReset({
