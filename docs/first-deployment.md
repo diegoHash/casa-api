@@ -11,9 +11,10 @@ No se usa ALB. El puerto 3001 queda enlazado localmente detrás del proxy.
 - Las migraciones Prisma están en `prisma/migrations`; en producción se aplican
   con `prisma migrate deploy`, nunca con `migrate dev`.
 - La API obtiene `casa/prod/database` y `casa/prod/app` de Secrets Manager al
-  iniciar en `NODE_ENV=production`. El secreto de base de datos actualmente
-  configurado se llama `casa/prod/database/` (barra final); el código admite
-  ese nombre como transición y prioriza el canónico sin barra.
+  iniciar en `NODE_ENV=production`. El secreto de base de datos existente se
+  llama `casa/prod/database/` (barra final), y el código lo consulta primero
+  porque el rol de EC2 tiene permiso sobre ese ARN; conserva el nombre canónico
+  sin barra como opción de transición futura.
 - El usuario runtime configurado es `casa-user` y la base se llama `AIS_DB`.
 - Las migraciones se ejecutarán desde GitHub Actions a través de un túnel SSH a
   EC2. El runner usará OIDC con `ec2-role-secret-reader`; una política de sesión
@@ -31,8 +32,8 @@ No se usa ALB. El puerto 3001 queda enlazado localmente detrás del proxy.
 - GitHub ya tiene los secrets `EC2_HOST`, `EC2_KEY` y `EC2_USER`, y la variable
   `EC2_KNOWN_HOSTS` valida la identidad del servidor SSH.
 - `casa/prod/app` y `casa/prod/database/` existen y contienen los campos
-  esperados. La API usa `casa/prod/database` cuando exista, con compatibilidad
-  temporal para `casa/prod/database/`.
+  esperados. La API prueba primero el nombre con barra final autorizado por el
+  rol de EC2, y luego el nombre canónico sin barra.
 - `casa/prod/database-migrations` existe y contiene los campos esperados. El
   usuario MySQL `casa-migrator` ya está creado con permisos limitados a `AIS_DB`.
   El rol compartido `ec2-role-secret-reader` debe conservar su confianza para
