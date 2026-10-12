@@ -72,9 +72,10 @@ tar -xzf "$ARCHIVE_PATH" -C "$RELEASE_DIR"
 rm -f -- "$ARCHIVE_PATH"
 cd "$RELEASE_DIR"
 
-npm ci
+npm ci --include=dev
 npm run prisma:generate
 npm run build
+npm prune --omit=dev
 
 UNIT_FILE="$RELEASE_DIR/casa-api.service"
 cat >"$UNIT_FILE" <<UNIT
