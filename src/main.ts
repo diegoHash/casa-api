@@ -3,7 +3,6 @@ import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import helmet from 'helmet';
-import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { MonitoringInterceptor } from './monitoring/monitoring.interceptor';
 
@@ -12,6 +11,9 @@ async function bootstrap() {
     await loadProductionSecrets();
   }
 
+  // AppModule validates required variables at import time, so load Secrets
+  // Manager first and only then evaluate the module configuration.
+  const { AppModule } = await import('./app.module');
 
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
   const config = app.get(ConfigService);
