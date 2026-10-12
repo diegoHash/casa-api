@@ -1,7 +1,6 @@
 const { spawnSync } = require('node:child_process');
 const path = require('node:path');
 const { Prisma, PrismaClient } = require('@prisma/client');
-const { loadProductionSecrets } = require('../dist/config/aws-secrets');
 
 const legacyRetirementMigration = '20260809040000_retire_owner_payment_legacy';
 const legacyPaymentColumns = [
@@ -70,7 +69,9 @@ async function main() {
     throw new Error('Set NODE_ENV=production to run production migrations.');
   }
 
-  await loadProductionSecrets();
+  if (!process.env.DATABASE_URL) {
+    throw new Error('DATABASE_URL must be provided by the isolated migration runner.');
+  }
   await guardLegacyPaymentRetirement();
 
   const prismaCli = require.resolve('prisma/build/index.js');

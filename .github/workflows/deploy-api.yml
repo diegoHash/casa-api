@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 concurrency:
   group: casa-api-production
@@ -58,6 +59,78 @@ jobs:
           ssh-keygen -y -P '' -f "$HOME/.ssh/casa-ec2" >/dev/null
           printf '%s\n' "$EC2_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           ssh-keygen -F "$EC2_HOST" -f "$HOME/.ssh/known_hosts" >/dev/null
+
+      - name: Configure AWS credentials for migrations
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::066640849393:role/ec2-role-secret-reader
+          aws-region: us-east-1
+          inline-session-policy: >-
+            {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"secretsmanager:GetSecretValue","Resource":"arn:aws:secretsmanager:us-east-1:066640849393:secret:casa/prod/database-migrations-IGAJrW"}]}
+
+      - name: Apply production database migrations
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          DATABASE_SECRET_ID: casa/prod/database-migrations
+        run: |
+          set -euo pipefail
+          umask 077
+          SECRET_FILE="$(mktemp)"
+          TUNNEL_PID=''
+          cleanup() {
+            if [[ -n "$TUNNEL_PID" ]]; then kill "$TUNNEL_PID" 2>/dev/null || true; fi
+            rm -f -- "$SECRET_FILE"
+          }
+          trap cleanup EXIT
+
+          aws secretsmanager get-secret-value \
+            --secret-id "$DATABASE_SECRET_ID" \
+            --region us-east-1 \
+            --query SecretString \
+            --output text > "$SECRET_FILE"
+
+          DB_HOST="$(jq -er '.host | strings | select(length > 0)' "$SECRET_FILE")"
+          DB_PORT="$(jq -er '.port | tostring | select(test("^[0-9]+$"))' "$SECRET_FILE")"
+          DB_USER="$(jq -er '.user_db_casa | strings | select(length > 0)' "$SECRET_FILE")"
+          DB_PASSWORD="$(jq -er '.pass_db_casa | strings | select(length > 0)' "$SECRET_FILE")"
+          DB_NAME="$(jq -er '.dbname | strings | select(length > 0)' "$SECRET_FILE")"
+          DB_ENGINE="$(jq -er '.engine | strings' "$SECRET_FILE")"
+          [[ "$DB_ENGINE" == mysql ]]
+          echo "::add-mask::$DB_PASSWORD"
+
+          ssh -i "$HOME/.ssh/casa-ec2" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o ExitOnForwardFailure=yes \
+            -o ServerAliveInterval=15 \
+            -N -L "127.0.0.1:13306:$DB_HOST:$DB_PORT" \
+            "$EC2_USER@$EC2_HOST" &
+          TUNNEL_PID=$!
+          for attempt in {1..20}; do
+            if nc -z 127.0.0.1 13306; then break; fi
+            if ! kill -0 "$TUNNEL_PID" 2>/dev/null; then
+              echo 'SSH tunnel to the production database failed.' >&2
+              exit 1
+            fi
+            sleep 1
+          done
+          nc -z 127.0.0.1 13306
+
+          export DB_USER DB_PASSWORD DB_NAME
+          export DATABASE_URL="$(python3 - <<'PY'
+          import os
+          from urllib.parse import quote
+          user, password, database = (
+              quote(os.environ[name], safe='')
+              for name in ('DB_USER', 'DB_PASSWORD', 'DB_NAME')
+          )
+          print(f'mysql://{user}:{password}@127.0.0.1:13306/{database}')
+          PY
+          )"
+          unset DB_USER DB_PASSWORD DB_NAME
+          echo "::add-mask::$DATABASE_URL"
+          NODE_ENV=production npm run prisma:migrate:deploy
 
       - name: Upload and deploy release
         env:

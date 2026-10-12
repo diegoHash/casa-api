@@ -13,11 +13,12 @@ if [[ "$ARCHIVE_PATH" != "$DEPLOY_ROOT/uploads/$RELEASE_ID.tar.gz" || ! -f "$ARC
   echo 'Release archive is missing or has an unexpected path.' >&2
   exit 2
 fi
-if ! command -v node >/dev/null || ! command -v npm >/dev/null || ! command -v flock >/dev/null; then
-  echo 'Install Node.js 24, npm, and flock on EC2 before enabling auto deploy.' >&2
+if ! command -v npm >/dev/null || ! command -v flock >/dev/null; then
+  echo 'Install npm and flock on EC2 before enabling auto deploy.' >&2
   exit 2
 fi
-if [[ "$(node -p 'process.versions.node.split(`.`)[0]')" != '24' ]]; then
+NODE_BIN="$(command -v node-24 || command -v node || true)"
+if [[ -z "$NODE_BIN" || "$("$NODE_BIN" -p 'process.versions.node.split(`.`)[0]')" != '24' ]]; then
   echo 'EC2 must run Node.js 24.' >&2
   exit 2
 fi
@@ -27,6 +28,10 @@ sudo -n true || {
 }
 
 mkdir -p "$DEPLOY_ROOT/releases" "$DEPLOY_ROOT/shared"
+NODE_SHIM_DIR="$DEPLOY_ROOT/shared/node24-bin"
+mkdir -p "$NODE_SHIM_DIR"
+ln -sfn "$NODE_BIN" "$NODE_SHIM_DIR/node"
+export PATH="$NODE_SHIM_DIR:$PATH"
 exec 9>"$DEPLOY_ROOT/deploy.lock"
 flock -n 9 || {
   echo 'Another backend deployment is already running.' >&2
@@ -70,9 +75,7 @@ cd "$RELEASE_DIR"
 npm ci
 npm run prisma:generate
 npm run build
-NODE_ENV=production npm run prisma:migrate:deploy
 
-NODE_BIN="$(command -v node)"
 UNIT_FILE="$RELEASE_DIR/casa-api.service"
 cat >"$UNIT_FILE" <<UNIT
 [Unit]
