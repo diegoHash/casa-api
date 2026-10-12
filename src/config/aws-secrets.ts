@@ -36,8 +36,23 @@ export async function getSecret<T>(secretId: string): Promise<T> {
     return JSON.parse(response.SecretString) as T;
 }
 
+async function getDatabaseSecret<T>(): Promise<T> {
+    // The first production secret was created with a trailing slash. Prefer
+    // the canonical name, but keep that existing secret usable during cutover.
+    for (const secretId of ['casa/prod/database', 'casa/prod/database/']) {
+        try {
+            return await getSecret<T>(secretId);
+        } catch (error) {
+            if ((error as { name?: string }).name !== 'ResourceNotFoundException') {
+                throw error;
+            }
+        }
+    }
+    throw new Error('Production database secret not found');
+}
+
 export async function loadProductionSecrets(): Promise<void> {
-    const db_secret = await getSecret<DatabaseSecret>("casa/prod/database");
+    const db_secret = await getDatabaseSecret<DatabaseSecret>();
     const app_secret = await getSecret<AppSecret>("casa/prod/app");
 
     const user_db_casa = encodeURIComponent(db_secret.user_db_casa);
