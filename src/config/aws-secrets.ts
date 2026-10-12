@@ -37,9 +37,9 @@ export async function getSecret<T>(secretId: string): Promise<T> {
 }
 
 async function getDatabaseSecret<T>(): Promise<T> {
-    // The first production secret was created with a trailing slash. Prefer
-    // the canonical name, but keep that existing secret usable during cutover.
-    for (const secretId of ['casa/prod/database', 'casa/prod/database/']) {
+    // The existing production secret has a trailing slash and the EC2 role is
+    // scoped to its ARN. Try it first; keep the canonical name as a later cutover.
+    for (const secretId of ['casa/prod/database/', 'casa/prod/database']) {
         try {
             return await getSecret<T>(secretId);
         } catch (error) {
