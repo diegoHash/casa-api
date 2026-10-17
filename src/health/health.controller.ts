@@ -7,6 +7,7 @@ export class HealthController {
     return {
       service: 'casa-api',
       status: 'ok',
+      build: process.env.CASA_BUILD_SHA || 'unknown',
       timestamp: new Date().toISOString(),
     };
   }

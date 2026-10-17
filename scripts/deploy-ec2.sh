@@ -63,6 +63,7 @@ if [[ -z "${TRUSTED_PROXY_CIDRS:-}" ]]; then
 fi
 
 RELEASE_DIR="$DEPLOY_ROOT/releases/$RELEASE_ID"
+RELEASE_COMMIT="${RELEASE_ID%%-*}"
 if [[ -e "$RELEASE_DIR" ]]; then
   echo "Release $RELEASE_ID already exists; refusing to overwrite it." >&2
   exit 2
@@ -89,6 +90,7 @@ Type=simple
 User=$USER
 WorkingDirectory=$DEPLOY_ROOT/current
 EnvironmentFile=$DEPLOY_ROOT/shared/runtime.env
+Environment=CASA_BUILD_SHA=$RELEASE_COMMIT
 ExecStart=$NODE_BIN $DEPLOY_ROOT/current/dist/main.js
 Restart=on-failure
 RestartSec=5
