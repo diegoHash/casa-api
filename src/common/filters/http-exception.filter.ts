@@ -64,16 +64,18 @@ export class HttpExceptionFilter implements ExceptionFilter {
       message = 'Ocurrió un error interno en el servidor.';
       details = null;
       this.logger.error(
-        `[${request.method}] ${request.url} - Status ${status} - Error: ${internalMessage}`,
+        `[${request.method}] ${request.path} - Status ${status} - Error: ${internalMessage}`,
         exception instanceof Error ? exception.stack : String(exception),
       );
-    } else {
+    } else if (status !== HttpStatus.UNAUTHORIZED) {
       this.logger.warn(
-        `[${request.method}] ${request.url} - Status ${status} - ${message}`,
+        `[${request.method}] ${request.path} - Status ${status} - ${message}`,
       );
     }
 
-    if (this.monitoring && status >= 400) {
+    // Expired/missing credentials are expected during session renewal and must
+    // not flood the operational error history.
+    if (this.monitoring && status >= 400 && status !== HttpStatus.UNAUTHORIZED) {
       const rootMessage = status >= 500 ? internalMessage : message;
       const safeMessage = truncateUtf8(sanitizeDiagnostic(rootMessage), MONITORING_MAX_MESSAGE_BYTES);
       const rawStack = exception instanceof Error ? sanitizeDiagnostic(exception.stack ?? '') || null : null;
@@ -81,7 +83,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       const auth = request.auth;
       void this.monitoring.recordError({
         statusCode: status, method: request.method.slice(0, 10),
-        path: request.originalUrl.slice(0, 1000), message: safeMessage.value,
+        path: request.path.slice(0, 1000), message: safeMessage.value,
         stack: safeStack.value, stackTruncated: safeStack.truncated || safeMessage.truncated,
         requestId, ipAddress: clientIp(request),
         userId: auth?.userId ?? null, userEmail: auth?.email?.slice(0, 190) ?? null,
@@ -94,7 +96,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       statusCode: status,
       requestId,
       timestamp: new Date().toISOString(),
-      path: request.url,
+      path: request.path,
       message,
       ...(details ? { error: details } : {}),
     });
