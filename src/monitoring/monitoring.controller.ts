@@ -1,8 +1,7 @@
-import { Controller, Get, MessageEvent, Post, Query, Req, Res, UseGuards, UnauthorizedException } from '@nestjs/common';
+import { Controller, Get, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import { PlatformRole } from '@prisma/client';
 import { Request } from 'express';
 import { Response } from 'express';
-import { randomBytes, createHash } from 'node:crypto';
 import { CurrentAuth, PlatformRoles } from '../auth/auth.decorators';
 import { AuthPrincipal } from '../auth/auth.types';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -13,15 +12,7 @@ import { MonitoringService } from './monitoring.service';
 @UseGuards(JwtAuthGuard, PlatformRolesGuard)
 @PlatformRoles(PlatformRole.ROOT)
 export class MonitoringController {
-  private readonly streamTokens = new Map<string, { expiresAt: number; userId: string }>();
-  private readonly tokenCleanup: NodeJS.Timeout;
-  constructor(private readonly monitoring: MonitoringService) {
-    this.tokenCleanup = setInterval(() => {
-      const now = Date.now();
-      for (const [hash, value] of this.streamTokens) if (value.expiresAt <= now) this.streamTokens.delete(hash);
-    }, 60_000);
-    this.tokenCleanup.unref();
-  }
+  constructor(private readonly monitoring: MonitoringService) {}
 
   @Get('dashboard') dashboard(@CurrentAuth() _auth: AuthPrincipal) { return this.monitoring.dashboard(); }
   @Get('errors') errors(
@@ -48,20 +39,13 @@ export class MonitoringController {
   @Get('filters/communities') communities() { return this.monitoring.listCommunities(); }
   @Get('filters/users') users() { return this.monitoring.listUsers(); }
 
-  @Post('stream-token') streamToken(@CurrentAuth() auth: AuthPrincipal) {
-    const token = randomBytes(32).toString('base64url');
-    const hash = createHash('sha256').update(token).digest('hex');
-    this.streamTokens.set(hash, { expiresAt: Date.now() + 60_000, userId: auth.userId });
-    return { token, expiresInSeconds: 60 };
+  // Keep old cached frontends from repeatedly logging a missing-route error
+  // while their EventSource bundle is replaced with the authenticated fetch stream.
+  @Post('stream-token') legacyStreamToken(@CurrentAuth() _auth: AuthPrincipal) {
+    return { token: '', expiresInSeconds: 0 };
   }
 
   @Get('events') async events(@Req() request: Request, @Res() response: Response) {
-    const token = typeof request.query.token === 'string' ? request.query.token : '';
-    const hash = createHash('sha256').update(token).digest('hex');
-    const grant = this.streamTokens.get(hash);
-    this.streamTokens.delete(hash);
-    const principal = (request as Request & { auth?: AuthPrincipal }).auth;
-    if (!grant || grant.expiresAt <= Date.now() || grant.userId !== principal?.userId) throw new UnauthorizedException();
     const from = typeof request.query.from === 'string' ? new Date(request.query.from) : undefined;
     const to = typeof request.query.to === 'string' ? new Date(request.query.to) : undefined;
     const filters = {

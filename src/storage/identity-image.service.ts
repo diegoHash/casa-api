@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import sharp from 'sharp';
 
 export const IDENTITY_IMAGE_MAX_BYTES = 2 * 1024 * 1024;
@@ -7,6 +7,8 @@ const MAX_INPUT_PIXELS = 30_000_000;
 
 @Injectable()
 export class IdentityImageService {
+  private readonly logger = new Logger(IdentityImageService.name);
+
   async toWebp(input: Buffer): Promise<Buffer> {
     if (!input.length || input.length > IDENTITY_IMAGE_MAX_BYTES) {
       throw new BadRequestException('La foto debe pesar como máximo 2 MB.');
@@ -21,7 +23,7 @@ export class IdentityImageService {
 
     try {
       const image = sharp(input, {
-        failOn: 'warning',
+        failOn: 'error',
         limitInputPixels: MAX_INPUT_PIXELS,
         animated: false,
         sequentialRead: true,
@@ -34,7 +36,7 @@ export class IdentityImageService {
       // Decode and re-encode pixels only: metadata, appended payloads, and original
       // container bytes are discarded. Quality remains high to protect document text.
       let output = await sharp(input, {
-        failOn: 'warning',
+        failOn: 'error',
         limitInputPixels: MAX_INPUT_PIXELS,
         animated: false,
         sequentialRead: true,
@@ -46,7 +48,7 @@ export class IdentityImageService {
 
       if (output.byteLength > IDENTITY_IMAGE_TARGET_BYTES) {
         const qualityPass = await sharp(input, {
-          failOn: 'warning',
+          failOn: 'error',
           limitInputPixels: MAX_INPUT_PIXELS,
           animated: false,
           sequentialRead: true,
@@ -62,6 +64,7 @@ export class IdentityImageService {
       return output;
     } catch (error) {
       if (error instanceof BadRequestException) throw error;
+      this.logger.warn(`No se pudo procesar una foto de identidad: ${error instanceof Error ? error.message : String(error)}`);
       throw new BadRequestException('No se pudo validar la foto. Prueba con otra imagen JPG o PNG.');
     }
   }
