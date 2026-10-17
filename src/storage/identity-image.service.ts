@@ -23,7 +23,10 @@ export class IdentityImageService {
 
     try {
       const image = sharp(input, {
-        failOn: 'error',
+        // Some otherwise valid photos contain recoverable decoder warnings
+        // (for example, malformed ancillary PNG metadata). Reject truncation,
+        // but let libvips decode the actual pixels and strip that metadata.
+        failOn: 'truncated',
         limitInputPixels: MAX_INPUT_PIXELS,
         animated: false,
         sequentialRead: true,
@@ -36,7 +39,7 @@ export class IdentityImageService {
       // Decode and re-encode pixels only: metadata, appended payloads, and original
       // container bytes are discarded. Quality remains high to protect document text.
       let output = await sharp(input, {
-        failOn: 'error',
+        failOn: 'truncated',
         limitInputPixels: MAX_INPUT_PIXELS,
         animated: false,
         sequentialRead: true,
@@ -48,7 +51,7 @@ export class IdentityImageService {
 
       if (output.byteLength > IDENTITY_IMAGE_TARGET_BYTES) {
         const qualityPass = await sharp(input, {
-          failOn: 'error',
+          failOn: 'truncated',
           limitInputPixels: MAX_INPUT_PIXELS,
           animated: false,
           sequentialRead: true,
