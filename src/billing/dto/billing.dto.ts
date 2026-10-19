@@ -494,3 +494,10 @@ export class CreatePayableReminderDto {
   @MaxLength(300)
   message?: string;
 }
+
+export class DeleteChargeNoticeDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(500)
+  reason!: string;
+}

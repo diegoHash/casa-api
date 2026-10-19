@@ -27,6 +27,7 @@ import { PrismaService } from '../database/prisma.service';
 import { AuthPrincipal } from '../auth/auth.types';
 import {
   CreateBillingPeriodDto,
+  DeleteChargeNoticeDto,
   CreateExpenseCategoryDto,
   CreateExpenseConceptDto,
   CreateVendorDto,
@@ -2220,6 +2221,78 @@ export class BillingService {
         result,
       );
       return result;
+    });
+  }
+
+  async deleteChargeNotice(
+    communityId: string,
+    actorUserId: string,
+    noticeId: string,
+    input: DeleteChargeNoticeDto,
+  ) {
+    const reason = input.reason.trim();
+    if (!reason) {
+      throw new BadRequestException('Indica el motivo para eliminar el aviso.');
+    }
+
+    return this.withFinancialTransaction(async (tx) => {
+      const notice = await tx.chargeNotice.findFirst({
+        where: { id: noticeId, communityId },
+        include: {
+          billingPeriod: { select: { id: true, periodKey: true, label: true, status: true } },
+          components: true,
+          allocations: true,
+        },
+      });
+      if (!notice) {
+        throw new NotFoundException('El aviso no pertenece a la comunidad seleccionada.');
+      }
+      if (notice.status !== ChargeNoticeStatus.PREPARED || notice.journalEntryId) {
+        throw new ConflictException('Solo puede eliminarse un aviso preparado que aún no haya sido emitido.');
+      }
+
+      // Serialize deletion with expense entry and payment application for this notice.
+      const periodLock = await tx.billingPeriod.updateMany({
+        where: { id: notice.billingPeriodId, communityId, status: BillingPeriodStatus.DRAFT },
+        data: { status: BillingPeriodStatus.DRAFT },
+      });
+      if (periodLock.count !== 1) {
+        throw new ConflictException('El período ya no está disponible para eliminar este aviso.');
+      }
+      const noticeLock = await tx.chargeNotice.updateMany({
+        where: { id: notice.id, communityId, status: ChargeNoticeStatus.PREPARED, journalEntryId: null },
+        data: { status: ChargeNoticeStatus.PREPARED },
+      });
+      if (noticeLock.count !== 1) {
+        throw new ConflictException('El aviso cambió durante la operación. Actualiza la pantalla e inténtalo de nuevo.');
+      }
+
+      const [expenseCount, applicationCount] = await Promise.all([
+        tx.periodExpense.count({ where: { communityId, billingPeriodId: notice.billingPeriodId } }),
+        tx.paymentApplication.count({ where: { chargeNoticeAllocation: { chargeNoticeId: notice.id } } }),
+      ]);
+      if (expenseCount > 0) {
+        throw new ConflictException('No puede eliminarse el aviso porque el período tiene gastos registrados.');
+      }
+      if (applicationCount > 0) {
+        throw new ConflictException('No puede eliminarse el aviso porque tiene pagos aplicados.');
+      }
+
+      await tx.chargeNotice.delete({ where: { id: notice.id } });
+      await tx.auditEvent.create({
+        data: {
+          communityId,
+          actorUserId,
+          requestId: randomUUID(),
+          action: 'CHARGE_NOTICE_DELETED',
+          entityType: 'ChargeNotice',
+          entityId: notice.id,
+          detail: `Aviso preparado eliminado para el período ${notice.billingPeriod.label}`,
+          reason,
+          before: JSON.parse(JSON.stringify(notice)) as Prisma.InputJsonValue,
+        },
+      });
+      return { id: notice.id, billingPeriodId: notice.billingPeriodId, deleted: true };
     });
   }
 
