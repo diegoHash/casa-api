@@ -17,6 +17,7 @@ import { ScopesGuard } from '../auth/scopes.guard';
 import { BillingService } from './billing.service';
 import {
   CreateBillingPeriodDto,
+  DeleteChargeNoticeDto,
   CreateExpenseCategoryDto,
   CreateExpenseConceptDto,
   CreateVendorDto,
@@ -280,6 +281,21 @@ export class BillingController {
       auth.communityId as string,
       auth.userId,
       noticeId,
+    );
+  }
+
+  @Post('charge-notices/:noticeId/delete')
+  @RequireScopes('billing.write')
+  deleteChargeNotice(
+    @CurrentAuth() auth: AuthPrincipal,
+    @Param('noticeId') noticeId: string,
+    @Body() input: DeleteChargeNoticeDto,
+  ) {
+    return this.billing.deleteChargeNotice(
+      auth.communityId as string,
+      auth.userId,
+      noticeId,
+      input,
     );
   }
 
