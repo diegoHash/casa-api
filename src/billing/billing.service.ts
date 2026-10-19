@@ -27,7 +27,7 @@ import { PrismaService } from '../database/prisma.service';
 import { AuthPrincipal } from '../auth/auth.types';
 import {
   CreateBillingPeriodDto,
-  DeleteChargeNoticeDto,
+  DeleteBillingPeriodDto,
   CreateExpenseCategoryDto,
   CreateExpenseConceptDto,
   CreateVendorDto,
@@ -240,7 +240,7 @@ export class BillingService {
 
   async snapshot(communityId: string) {
     await this.ensureOpenBillingPeriod(communityId);
-    return this.prisma.community.findUniqueOrThrow({
+    const snapshot = await this.prisma.community.findUniqueOrThrow({
       where: { id: communityId },
       select: {
         id: true,
@@ -312,6 +312,44 @@ export class BillingService {
         },
       },
     });
+    return {
+      ...snapshot,
+      billingPeriods: await Promise.all(snapshot.billingPeriods.map(async (period) => {
+        const noticeEligible = !period.chargeNotice || (
+          period.chargeNotice.status !== ChargeNoticeStatus.ISSUED &&
+          period.chargeNotice.status !== ChargeNoticeStatus.VOID &&
+          !period.chargeNotice.journalEntryId
+        );
+        if (
+          period.status !== BillingPeriodStatus.DRAFT || period.issuedAt || period.closedAt ||
+          !noticeEligible || period.expenses.length > 0
+        ) {
+          return { ...period, canDelete: false };
+        }
+        const accountingPeriod = await this.prisma.accountingPeriod.findUnique({
+          where: { communityId_periodKey: { communityId, periodKey: period.periodKey } },
+          select: { id: true, status: true, lockedAt: true },
+        });
+        const [expenseCount, applicationCount, paymentCount, journalEntryCount] = await Promise.all([
+          this.prisma.periodExpense.count({ where: { communityId, billingPeriodId: period.id } }),
+          period.chargeNotice
+            ? this.prisma.paymentApplication.count({ where: { chargeNoticeAllocation: { chargeNoticeId: period.chargeNotice.id } } })
+            : Promise.resolve(0),
+          this.prisma.ownerPayment.count({ where: { communityId, paidAt: { gte: period.startsOn, lte: period.endsOn } } }),
+          accountingPeriod
+            ? this.prisma.journalEntry.count({ where: { communityId, accountingPeriodId: accountingPeriod.id } })
+            : Promise.resolve(0),
+        ]);
+        return {
+          ...period,
+          canDelete: (!accountingPeriod || (
+              accountingPeriod.status === AccountingPeriodStatus.OPEN &&
+              !accountingPeriod.lockedAt
+            )) &&
+            expenseCount === 0 && applicationCount === 0 && paymentCount === 0 && journalEntryCount === 0,
+        };
+      })),
+    };
   }
 
   async ownerPaymentBalance(communityId: string, propertyId: string) {
@@ -2224,75 +2262,97 @@ export class BillingService {
     });
   }
 
-  async deleteChargeNotice(
+  async deleteBillingPeriod(
     communityId: string,
     actorUserId: string,
-    noticeId: string,
-    input: DeleteChargeNoticeDto,
+    billingPeriodId: string,
+    input: DeleteBillingPeriodDto,
   ) {
     const reason = input.reason.trim();
     if (!reason) {
-      throw new BadRequestException('Indica el motivo para eliminar el aviso.');
+      throw new BadRequestException('Indica el motivo para eliminar el mes de gestión.');
     }
 
     return this.withFinancialTransaction(async (tx) => {
-      const notice = await tx.chargeNotice.findFirst({
-        where: { id: noticeId, communityId },
+      const period = await tx.billingPeriod.findFirst({
+        where: { id: billingPeriodId, communityId },
         include: {
-          billingPeriod: { select: { id: true, periodKey: true, label: true, status: true } },
-          components: true,
-          allocations: true,
+          chargeNotice: { include: { components: true, allocations: true } },
         },
       });
-      if (!notice) {
-        throw new NotFoundException('El aviso no pertenece a la comunidad seleccionada.');
+      if (!period) {
+        throw new NotFoundException('El mes de gestión no pertenece a la comunidad seleccionada.');
       }
-      if (notice.status !== ChargeNoticeStatus.PREPARED || notice.journalEntryId) {
-        throw new ConflictException('Solo puede eliminarse un aviso preparado que aún no haya sido emitido.');
+      if (period.status !== BillingPeriodStatus.DRAFT || period.issuedAt || period.closedAt) {
+        throw new ConflictException('Solo puede eliminarse un mes de gestión que siga en borrador.');
       }
 
-      // Serialize deletion with expense entry and payment application for this notice.
       const periodLock = await tx.billingPeriod.updateMany({
-        where: { id: notice.billingPeriodId, communityId, status: BillingPeriodStatus.DRAFT },
+        where: { id: period.id, communityId, status: BillingPeriodStatus.DRAFT },
         data: { status: BillingPeriodStatus.DRAFT },
       });
       if (periodLock.count !== 1) {
-        throw new ConflictException('El período ya no está disponible para eliminar este aviso.');
-      }
-      const noticeLock = await tx.chargeNotice.updateMany({
-        where: { id: notice.id, communityId, status: ChargeNoticeStatus.PREPARED, journalEntryId: null },
-        data: { status: ChargeNoticeStatus.PREPARED },
-      });
-      if (noticeLock.count !== 1) {
-        throw new ConflictException('El aviso cambió durante la operación. Actualiza la pantalla e inténtalo de nuevo.');
+        throw new ConflictException('El mes de gestión cambió durante la operación. Actualiza la pantalla e inténtalo de nuevo.');
       }
 
-      const [expenseCount, applicationCount] = await Promise.all([
-        tx.periodExpense.count({ where: { communityId, billingPeriodId: notice.billingPeriodId } }),
-        tx.paymentApplication.count({ where: { chargeNoticeAllocation: { chargeNoticeId: notice.id } } }),
+      const notice = period.chargeNotice;
+      if (notice && (notice.status === ChargeNoticeStatus.ISSUED || notice.status === ChargeNoticeStatus.VOID || notice.journalEntryId)) {
+        throw new ConflictException('No puede eliminarse un mes cuyo aviso ya fue emitido o anulado.');
+      }
+
+      const accountingPeriod = await tx.accountingPeriod.findUnique({
+        where: { communityId_periodKey: { communityId, periodKey: period.periodKey } },
+      });
+      if (accountingPeriod) {
+        const accountingPeriodLock = await tx.accountingPeriod.updateMany({
+          where: { id: accountingPeriod.id, communityId, status: AccountingPeriodStatus.OPEN },
+          data: { status: AccountingPeriodStatus.OPEN },
+        });
+        if (accountingPeriodLock.count !== 1 || accountingPeriod.lockedAt) {
+          throw new ConflictException('El período contable ya no está abierto para eliminar este mes.');
+        }
+      }
+
+      const [expenseCount, applicationCount, paymentCount, journalEntryCount] = await Promise.all([
+        tx.periodExpense.count({ where: { communityId, billingPeriodId: period.id } }),
+        notice
+          ? tx.paymentApplication.count({ where: { chargeNoticeAllocation: { chargeNoticeId: notice.id } } })
+          : Promise.resolve(0),
+        tx.ownerPayment.count({ where: { communityId, paidAt: { gte: period.startsOn, lte: period.endsOn } } }),
+        accountingPeriod
+          ? tx.journalEntry.count({ where: { communityId, accountingPeriodId: accountingPeriod.id } })
+          : Promise.resolve(0),
       ]);
       if (expenseCount > 0) {
-        throw new ConflictException('No puede eliminarse el aviso porque el período tiene gastos registrados.');
+        throw new ConflictException('No puede eliminarse el mes porque tiene gastos registrados.');
       }
       if (applicationCount > 0) {
-        throw new ConflictException('No puede eliminarse el aviso porque tiene pagos aplicados.');
+        throw new ConflictException('No puede eliminarse el mes porque el aviso tiene pagos aplicados.');
+      }
+      if (paymentCount > 0) {
+        throw new ConflictException('No puede eliminarse el mes porque tiene pagos registrados en esas fechas.');
+      }
+      if (journalEntryCount > 0) {
+        throw new ConflictException('No puede eliminarse el mes porque el período contable tiene asientos.');
       }
 
-      await tx.chargeNotice.delete({ where: { id: notice.id } });
+      if (notice) await tx.chargeNotice.delete({ where: { id: notice.id } });
+      await tx.billingPeriod.delete({ where: { id: period.id } });
+      if (accountingPeriod) await tx.accountingPeriod.delete({ where: { id: accountingPeriod.id } });
       await tx.auditEvent.create({
         data: {
           communityId,
           actorUserId,
           requestId: randomUUID(),
-          action: 'CHARGE_NOTICE_DELETED',
-          entityType: 'ChargeNotice',
-          entityId: notice.id,
-          detail: `Aviso preparado eliminado para el período ${notice.billingPeriod.label}`,
+          action: 'BILLING_PERIOD_DELETED',
+          entityType: 'BillingPeriod',
+          entityId: period.id,
+          detail: `Mes de gestión vacío eliminado: ${period.label}`,
           reason,
-          before: JSON.parse(JSON.stringify(notice)) as Prisma.InputJsonValue,
+          before: JSON.parse(JSON.stringify({ period, accountingPeriod })) as Prisma.InputJsonValue,
         },
       });
-      return { id: notice.id, billingPeriodId: notice.billingPeriodId, deleted: true };
+      return { id: period.id, periodKey: period.periodKey, deleted: true };
     });
   }
 
