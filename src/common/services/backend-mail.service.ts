@@ -127,7 +127,7 @@ export class BackendMailService {
     const apiKey = this.configService.get<string>('RESEND_API_KEY');
     const fromAddress =
       this.configService.get<string>('EMAIL_FROM_ADDRESS') ||
-      'onboarding@resend.dev';
+      'noreply@somoscasa.site';
 
     this.logger.log(`[CASA Mailer] Intento de despacho de correo para ${to} | Asunto: "${subject}" | Remitente: ${fromAddress}`);
 
