@@ -324,7 +324,12 @@ export class BillingService {
           period.status !== BillingPeriodStatus.DRAFT || period.issuedAt || period.closedAt ||
           !noticeEligible || period.expenses.length > 0
         ) {
-          return { ...period, canDelete: false };
+          const deleteBlockReason = period.status !== BillingPeriodStatus.DRAFT || period.issuedAt || period.closedAt
+            ? 'Este mes ya no está en borrador.'
+            : !noticeEligible
+              ? 'El aviso ya fue emitido, anulado o tiene un asiento contable.'
+              : 'Este mes tiene gastos registrados.';
+          return { ...period, canDelete: false, deleteBlockReason };
         }
         const accountingPeriod = await this.prisma.accountingPeriod.findUnique({
           where: { communityId_periodKey: { communityId, periodKey: period.periodKey } },
@@ -342,11 +347,25 @@ export class BillingService {
         ]);
         return {
           ...period,
-          canDelete: (!accountingPeriod || (
-              accountingPeriod.status === AccountingPeriodStatus.OPEN &&
+          canDelete:
+            (!accountingPeriod || (
+              (accountingPeriod.status === AccountingPeriodStatus.OPEN ||
+                accountingPeriod.status === AccountingPeriodStatus.CLOSED) &&
               !accountingPeriod.lockedAt
             )) &&
             expenseCount === 0 && applicationCount === 0 && paymentCount === 0 && journalEntryCount === 0,
+          deleteBlockReason: accountingPeriod &&
+            (accountingPeriod.status === AccountingPeriodStatus.LOCKED || accountingPeriod.lockedAt)
+            ? 'El período contable está bloqueado.'
+            : expenseCount > 0
+              ? 'Este mes tiene gastos registrados.'
+              : applicationCount > 0
+                ? 'Este mes tiene pagos aplicados a un aviso.'
+                : paymentCount > 0
+                  ? 'Hay pagos registrados dentro de las fechas del mes.'
+                  : journalEntryCount > 0
+                    ? 'El período contable tiene asientos registrados.'
+                    : null,
         };
       })),
     };
@@ -2305,11 +2324,16 @@ export class BillingService {
       });
       if (accountingPeriod) {
         const accountingPeriodLock = await tx.accountingPeriod.updateMany({
-          where: { id: accountingPeriod.id, communityId, status: AccountingPeriodStatus.OPEN },
-          data: { status: AccountingPeriodStatus.OPEN },
+          where: {
+            id: accountingPeriod.id,
+            communityId,
+            status: { in: [AccountingPeriodStatus.OPEN, AccountingPeriodStatus.CLOSED] },
+            lockedAt: null,
+          },
+          data: { status: accountingPeriod.status },
         });
-        if (accountingPeriodLock.count !== 1 || accountingPeriod.lockedAt) {
-          throw new ConflictException('El período contable ya no está abierto para eliminar este mes.');
+        if (accountingPeriodLock.count !== 1) {
+          throw new ConflictException('El período contable está bloqueado y no se puede eliminar el mes.');
         }
       }
 
