@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import sharp from 'sharp';
+const sharp = require('sharp') as typeof import('sharp').default;
 
 export const IDENTITY_IMAGE_MAX_BYTES = 2 * 1024 * 1024;
 export const IDENTITY_IMAGE_TARGET_BYTES = 500 * 1024;
