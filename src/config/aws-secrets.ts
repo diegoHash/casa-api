@@ -17,6 +17,7 @@ export interface AppSecret {
     ROOT_BOOTSTRAP_EMAIL: string;
     ROOT_BOOTSTRAP_PASSWORD: string;
     RESEND_API_KEY?: string;
+    EMAIL_FROM_ADDRESS?: string;
 }
 
 
@@ -87,5 +88,9 @@ export async function loadProductionSecrets(): Promise<void> {
     process.env.ROOT_BOOTSTRAP_EMAIL = app_secret.ROOT_BOOTSTRAP_EMAIL;
     process.env.ROOT_BOOTSTRAP_PASSWORD = app_secret.ROOT_BOOTSTRAP_PASSWORD;
     process.env.RESEND_API_KEY = app_secret.RESEND_API_KEY || '';
+    process.env.EMAIL_FROM_ADDRESS =
+        app_secret.EMAIL_FROM_ADDRESS ||
+        process.env.EMAIL_FROM_ADDRESS ||
+        'noreply@somoscasa.site';
 
 }

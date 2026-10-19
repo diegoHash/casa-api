@@ -192,7 +192,11 @@ No crear `DATABASE_URL` ni credenciales estáticas de AWS en un archivo `.env`
 de producción. El rol de EC2 proporciona las credenciales AWS; la aplicación
 construye la URL de RDS a partir de Secrets Manager. El secreto
 `casa/prod/app` debe incluir `JWT_ACCESS_SECRET`, `ROOT_BOOTSTRAP_EMAIL` y
-`ROOT_BOOTSTRAP_PASSWORD`. La aplicación valida esa variable en cada arranque;
+`ROOT_BOOTSTRAP_PASSWORD`. Para los correos de confirmación, puede incluir
+`EMAIL_FROM_ADDRESS` (por ejemplo, `noreply@somoscasa.site`); si se omite, la
+API usa ese remitente por defecto. El dominio remitente debe estar verificado
+en Resend antes de enviar a destinatarios públicos. La aplicación valida esas
+variables en cada arranque;
 tras crear el usuario ROOT inicial, rotarla por una contraseña aleatoria fuerte
 que no se reutilice en cuentas humanas.
 
