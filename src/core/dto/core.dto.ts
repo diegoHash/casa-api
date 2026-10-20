@@ -47,7 +47,7 @@ export class UpdateCommunityDto {
 
   @IsString()
   @IsNotEmpty()
-  @MaxLength(40)
+  @MaxLength(190)
   @IsOptional()
   phone?: string;
 
@@ -229,6 +229,103 @@ export class CreatePropertyDto {
   @Max(100)
   @IsOptional()
   parkingCapacity?: number | null;
+}
+
+export class ImportPropertyOwnerDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  firstName!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  lastName!: string;
+
+  @IsEnum(DocumentType)
+  documentType!: DocumentType;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(40)
+  documentNumber!: string;
+
+  @IsString()
+  @MaxLength(190)
+  @IsOptional()
+  phone?: string;
+
+  @IsEmail()
+  @MaxLength(190)
+  @IsOptional()
+  email?: string;
+
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 4 })
+  @Min(0.0001)
+  @Max(100)
+  ownershipPercentage!: number;
+}
+
+export class ImportPropertyRowDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(60)
+  code!: string;
+
+  @IsEnum(PropertyKind)
+  kind!: PropertyKind;
+
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 6 })
+  @Min(0)
+  @Max(100)
+  @IsOptional()
+  aliquot?: number;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(10000)
+  @IsOptional()
+  maximumOccupancy?: number;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(10000)
+  @IsOptional()
+  braceletQuota?: number;
+
+  @IsString()
+  @MaxLength(120)
+  @IsOptional()
+  parkingSpace?: string;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  @IsOptional()
+  parkingCapacity?: number;
+
+  @IsDateString()
+  effectiveDate!: string;
+
+  @IsArray()
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => ImportPropertyOwnerDto)
+  owners!: ImportPropertyOwnerDto[];
+}
+
+export class ImportPropertiesDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(20000)
+  @ValidateNested({ each: true })
+  @Type(() => ImportPropertyRowDto)
+  rows!: ImportPropertyRowDto[];
 }
 
 export class UpdatePropertyDto {

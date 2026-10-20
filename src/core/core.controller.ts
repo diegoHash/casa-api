@@ -23,6 +23,7 @@ import {
   CreateOwnershipDto,
   CreatePersonDto,
   CreatePersonContactDto,
+  ImportPropertiesDto,
   UpdatePersonDto,
   CreatePropertyDto,
   CreatePropertyLocationDto,
@@ -151,6 +152,23 @@ export class CoreController {
     @Body() input: CreatePropertyDto,
   ) {
     return this.core.createProperty(this.communityId(auth), auth.userId, input);
+  }
+
+  @Post('properties/import')
+  @RequireScopes(
+    'core.properties.write',
+    'core.people.write',
+    'core.ownerships.write',
+  )
+  importProperties(
+    @CurrentAuth() auth: AuthPrincipal,
+    @Body() input: ImportPropertiesDto,
+  ) {
+    return this.core.importProperties(
+      this.communityId(auth),
+      auth.userId,
+      input,
+    );
   }
 
   @Patch('properties/:id/capacity')

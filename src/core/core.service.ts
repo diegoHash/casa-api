@@ -8,6 +8,7 @@ import {
   AdministrationMode,
   LifecycleStatus,
   Prisma,
+  PersonContactType,
   RecordStatus,
 } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
@@ -20,6 +21,7 @@ import {
   CreateOwnershipDto,
   CreatePersonDto,
   CreatePersonContactDto,
+  ImportPropertiesDto,
   UpdatePersonDto,
   CreatePropertyDto,
   CreatePropertyLocationDto,
@@ -626,6 +628,213 @@ export class CoreService {
       );
       return property;
     });
+  }
+
+  async importProperties(
+    communityId: string,
+    actorUserId: string,
+    input: ImportPropertiesDto,
+  ) {
+    const codes = input.rows.map((row) => row.code.trim().toUpperCase());
+    if (new Set(codes).size !== codes.length) {
+      throw new ConflictException(
+        'El archivo contiene códigos de inmueble repetidos. Agrupa los propietarios del mismo inmueble antes de importar.',
+      );
+    }
+
+    return this.prisma.$transaction(
+      async (transaction) => {
+        const existing = await transaction.property.findMany({
+          where: { communityId, code: { in: codes } },
+          select: { code: true },
+        });
+        if (existing.length) {
+          throw new ConflictException(
+            `Ya existen estos códigos en la comunidad: ${existing.map((item) => item.code).join(', ')}.`,
+          );
+        }
+
+        let ownerCount = 0;
+        const imported = [];
+        for (const row of input.rows) {
+          const code = row.code.trim().toUpperCase();
+          const property = await transaction.property.create({
+            data: {
+              communityId,
+              code,
+              kind: row.kind,
+              currentAliquot:
+                row.aliquot === undefined
+                  ? null
+                  : new Prisma.Decimal(row.aliquot),
+              maximumOccupancy: row.maximumOccupancy ?? null,
+              braceletQuota: row.braceletQuota ?? 0,
+              parkingSpace: row.parkingSpace?.trim() || null,
+              parkingCapacity: row.parkingSpace?.trim()
+                ? row.parkingCapacity ?? null
+                : null,
+            },
+          });
+          if (row.aliquot !== undefined) {
+            await transaction.propertyAliquotPeriod.create({
+              data: {
+                communityId,
+                propertyId: property.id,
+                aliquot: new Prisma.Decimal(row.aliquot),
+                startsOn: new Date(row.effectiveDate),
+                reason: 'Alícuota inicial importada',
+              },
+            });
+          }
+          await this.audit(
+            transaction,
+            communityId,
+            actorUserId,
+            'PROPERTY_CREATED',
+            'Property',
+            property.id,
+            `Inmueble ${property.code} importado`,
+            undefined,
+            property,
+          );
+
+          const owners = row.owners ?? [];
+          const ownershipTotal = owners.reduce(
+            (total, owner) => total + owner.ownershipPercentage,
+            0,
+          );
+          if (ownershipTotal > 100.00005) {
+            throw new ConflictException(
+              `La participación de propietarios del inmueble ${code} suma ${ownershipTotal.toFixed(4)}%, por encima del 100%.`,
+            );
+          }
+
+          const importedOwners = [];
+          for (const ownerInput of owners) {
+            const incomingPhones = (ownerInput.phone ?? '')
+              .split(/[;,|/\n]+/)
+              .map((phone) => phone.trim())
+              .filter(Boolean);
+            const primaryPhone = incomingPhones[0]?.slice(0, 40);
+            const documentNumber = ownerInput.documentNumber
+              .trim()
+              .toUpperCase()
+              .replace(/[^A-Z0-9]/g, '');
+            let person = await transaction.person.findUnique({
+              where: {
+                documentType_documentNumber: {
+                  documentType: ownerInput.documentType,
+                  documentNumber,
+                },
+              },
+            });
+            if (!person) {
+              person = await transaction.person.create({
+                data: {
+                  firstName: normalizePersonName(ownerInput.firstName),
+                  lastName: normalizePersonName(ownerInput.lastName),
+                  documentType: ownerInput.documentType,
+                  documentNumber,
+                  phone: primaryPhone || null,
+                  email: ownerInput.email?.trim().toLowerCase() || null,
+                },
+              });
+            } else if (!person.phone && primaryPhone) {
+              person = await transaction.person.update({
+                where: { id: person.id },
+                data: { phone: primaryPhone },
+              });
+            }
+            const communityPersonBefore = await transaction.communityPerson.findUnique({
+              where: {
+                communityId_personId: { communityId, personId: person.id },
+              },
+            });
+            const communityPerson = await transaction.communityPerson.upsert({
+              where: { communityId_personId: { communityId, personId: person.id } },
+              create: { communityId, personId: person.id },
+              update: { status: RecordStatus.ACTIVE },
+            });
+            if (!communityPersonBefore || communityPersonBefore.status === RecordStatus.INACTIVE) {
+              await this.audit(
+                transaction,
+                communityId,
+                actorUserId,
+                'PERSON_LINKED',
+                'Person',
+                person.id,
+                `${person.firstName} ${person.lastName} incorporado mediante importación`,
+                communityPersonBefore ?? undefined,
+                { person, relation: communityPerson },
+              );
+            }
+            const remainingPhones = person.phone === primaryPhone
+              ? incomingPhones.slice(1)
+              : incomingPhones;
+            for (const phone of remainingPhones) {
+              const existingContact = await transaction.personContact.findUnique({
+                where: {
+                  communityId_personId_type_value: {
+                    communityId,
+                    personId: person.id,
+                    type: PersonContactType.PHONE,
+                    value: phone,
+                  },
+                },
+              });
+              if (!existingContact) {
+                await transaction.personContact.create({
+                  data: {
+                    communityId,
+                    personId: person.id,
+                    type: PersonContactType.PHONE,
+                    label: 'Teléfono importado',
+                    value: phone,
+                  },
+                });
+              }
+            }
+            const existingOwnership = await transaction.ownership.findFirst({
+              where: {
+                communityId,
+                propertyId: property.id,
+                personId: person.id,
+                status: LifecycleStatus.ACTIVE,
+              },
+            });
+            if (!existingOwnership) {
+              const ownership = await transaction.ownership.create({
+                data: {
+                  communityId,
+                  propertyId: property.id,
+                  personId: person.id,
+                  ownershipPercentage: new Prisma.Decimal(
+                    ownerInput.ownershipPercentage,
+                  ),
+                  startsOn: new Date(row.effectiveDate),
+                },
+              });
+              await this.audit(
+                transaction,
+                communityId,
+                actorUserId,
+                'OWNERSHIP_CREATED',
+                'Ownership',
+                ownership.id,
+                `Propietario importado y vinculado a ${property.code}`,
+                undefined,
+                ownership,
+              );
+              ownerCount += 1;
+            }
+            importedOwners.push(person.id);
+          }
+          imported.push({ propertyId: property.id, code: property.code, ownerIds: importedOwners });
+        }
+        return { importedProperties: imported.length, importedOwners: ownerCount, properties: imported };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
   }
 
   async updateProperty(
